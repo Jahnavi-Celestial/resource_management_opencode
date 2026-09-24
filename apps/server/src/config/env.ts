@@ -42,6 +42,10 @@ export interface Env {
   }
   rejectionReasonMinLength: number
   reminderLeadTimeMinutes: number
+  admin: {
+    email: string
+    password: string
+  }
 }
 
 function required(name: string): string {
@@ -83,6 +87,10 @@ export function loadEnv(): Env {
     throw new Error(`NODE_ENV must be one of development|test|production, got: ${nodeEnvRaw}`)
   }
 
+  if (nodeEnvRaw === 'production' && (process.env.ADMIN_PASSWORD ?? '').trim() === '') {
+    throw new Error('ADMIN_PASSWORD must be set explicitly when NODE_ENV=production')
+  }
+
   cached = {
     nodeEnv: nodeEnvRaw,
     port: requiredInt('PORT', 4000),
@@ -104,6 +112,11 @@ export function loadEnv(): Env {
     },
     rejectionReasonMinLength: requiredInt('REJECTION_REASON_MIN_LENGTH', 10),
     reminderLeadTimeMinutes: requiredInt('REMINDER_LEAD_TIME_MINUTES', 60),
+    admin: {
+      email: optional('ADMIN_EMAIL', 'admin@resource.local').toLowerCase(),
+      password: optional('ADMIN_PASSWORD', 'Admin@12345!'),
+    },
   }
+
   return cached
 }

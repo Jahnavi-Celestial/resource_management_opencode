@@ -12,6 +12,8 @@
     "migrate": "npm run migrate -w apps/server",
     "migrate:revert": "npm run migrate:revert -w apps/server",
     "check-schema": "npm run check-schema -w apps/server",
+    "seed": "npm run seed -w apps/server",
+    "test:s2": "npm run test:s2 -w apps/server",
     "typecheck": "npm run typecheck -w packages/shared && npm run typecheck -w apps/server"
   },
   "engines": {

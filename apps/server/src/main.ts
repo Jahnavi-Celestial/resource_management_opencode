@@ -1,3 +1,4 @@
+import 'reflect-metadata'
 import { createApp } from './app'
 import { loadEnv } from './config/env'
 import { createDataSource } from './config/data-source'
@@ -7,7 +8,7 @@ async function main(): Promise<void> {
   const dataSource = createDataSource()
   await dataSource.initialize()
 
-  const app = createApp(dataSource)
+  const app = await createApp(dataSource)
   const server = app.listen(env.port, () => {
     console.log(`[${env.nodeEnv}] server listening on http://localhost:${env.port}/health`)
   })
