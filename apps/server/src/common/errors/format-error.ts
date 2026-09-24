@@ -2,6 +2,7 @@ import { GraphQLError, type GraphQLFormattedError } from 'graphql'
 import { AuthorisationError } from './authorisation-error'
 import { ConflictError } from './conflict-error'
 import { DomainError } from './domain-error'
+import { extractFieldErrors } from './field-errors'
 import { InvalidCredentialsError } from './invalid-credentials-error'
 import { LockoutGuardError } from './lockout-guard-error'
 import { NotFoundError } from './not-found-error'
@@ -27,11 +28,17 @@ function resolveCode(error: unknown): string | undefined {
 }
 
 export function formatError(formattedError: GraphQLFormattedError, error: unknown): GraphQLFormattedError {
+  const fieldErrors = extractFieldErrors(error)
   const code = resolveCode(error)
   const extensions: Record<string, unknown> = { ...formattedError.extensions }
   delete extensions.stacktrace
   if (code !== undefined) {
     extensions.code = code
+  }
+  if (fieldErrors !== undefined) {
+    delete extensions.validationErrors
+    extensions.code = 'BAD_USER_INPUT'
+    extensions.fieldErrors = fieldErrors
   }
   return { ...formattedError, extensions }
 }

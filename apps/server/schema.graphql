@@ -1,0 +1,82 @@
+type Query {
+  me: MeType!
+  permissions(pageSize: Int! = 20, page: Int! = 1): PermissionPage!
+  role(id: String!): Role!
+  roles(pageSize: Int! = 20, page: Int! = 1): RolePage!
+}
+
+type MeType {
+  employee: Employee!
+  roles: [Role!]!
+  permissionKeys: [String!]!
+}
+
+type Employee {
+  id: ID!
+  firstName: String!
+  lastName: String!
+  email: String!
+  createdAt: DateTimeISO!
+  updatedAt: DateTimeISO!
+}
+
+"""
+A date-time string at UTC, such as 2007-12-03T10:15:30Z, compliant with the `date-time` format outlined in section 5.6 of the RFC 3339 profile of the ISO 8601 standard for representation of dates and times using the Gregorian calendar.This scalar is serialized to a string in ISO 8601 format and parsed from a string in ISO 8601 format.
+"""
+scalar DateTimeISO
+
+type Role {
+  id: ID!
+  roleName: String!
+  permissions: [Permission!]!
+}
+
+type Permission {
+  id: ID!
+  permissionName: String!
+}
+
+type PermissionPage {
+  items: [Permission!]!
+  total: Int!
+}
+
+type RolePage {
+  items: [Role!]!
+  total: Int!
+}
+
+type Mutation {
+  login(input: LoginInput!): String!
+  assignPermissionToRole(input: RolePermissionInput!): Role!
+  removePermissionFromRole(input: RolePermissionInput!): Role!
+  assignRoleToEmployee(input: EmployeeRoleInput!): Employee!
+  removeRoleFromEmployee(input: EmployeeRoleInput!): Employee!
+  createRole(input: CreateRoleInput!): Role!
+  updateRole(input: UpdateRoleInput!): Role!
+  deleteRole(id: String!): Boolean!
+}
+
+input LoginInput {
+  email: String!
+  password: String!
+}
+
+input RolePermissionInput {
+  roleId: ID!
+  permissionId: ID!
+}
+
+input EmployeeRoleInput {
+  employeeId: ID!
+  roleId: ID!
+}
+
+input CreateRoleInput {
+  roleName: String!
+}
+
+input UpdateRoleInput {
+  id: ID!
+  roleName: String!
+}

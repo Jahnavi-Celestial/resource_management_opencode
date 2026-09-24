@@ -4,7 +4,20 @@
 
 S0 (scaffold), S1 (schema + first migration), and S2 (auth, RBAC, seeds) are
 complete per docs/PLAN.md, and the S2 acceptance suite
-(`npm run test:s2`) passes. Client and S3+ are not started yet.
+(`npm run test:s2`) passes. The S3 pagination contract
+(`src/common/pagination/`: PageArgs, SortInput + whitelist, Paginated<T>,
+applyPagination helper) is in place — `npm run test:pagination` proves it.
+NFR-6 field-error formatting (`common/errors/field-errors.ts`:
+InputValidationError + class-validator → extensions.fieldErrors, composing
+with the S2 code convention) is in place — `npm run test:validation` proves
+it against the live schema. `common/db/transaction.ts`
+(`runInTransaction` + `tx.afterCommit`, FR-90/NFR-3) is in place —
+`npm run test:transaction` proves rollback/commit callback semantics.
+Loaders (`src/loaders/`: employee, rolePermissions stubs, one fresh set per
+request via `createGraphQLContext`) and schema emission
+(`apps/server/schema.graphql`, rewritten on every boot) are in place —
+`npm run test:loaders` proves per-request isolation and no cross-request
+cache leakage. S3 is complete; the client (C0+) is not started yet.
 
 ## Commands
 
@@ -17,6 +30,18 @@ npm run seed           # idempotent seeds: FR-89 permissions, Admin/Manager/Empl
                        # roles, system account, bootstrap admin (ADMIN_EMAIL/ADMIN_PASSWORD)
 npm run test:s2        # S2 acceptance suite: login/me, system-login refusal, generic
                        # authz errors, live permission revocation, lockout guard, no password field
+npm run test:pagination # pagination contract: pageSize clamps to 100, non-whitelisted
+                       # sort fields throw DomainError (offline, no DB needed)
+npm run test:validation # NFR-6: invalid input → extensions.fieldErrors + BAD_USER_INPUT,
+                       # no value echo/leak; S2 FORBIDDEN/UNAUTHENTICATED shapes unchanged
+                       # (boots the app — needs local Postgres)
+npm run test:transaction # runInTransaction/afterCommit: callback fires once on commit,
+                       # zero times on rollback, writes durable/rolled back correctly
+                       # (writes real rows — needs local Postgres)
+npm run test:loaders   # NFR-1: concurrent requests get separate DataLoader
+                       # instances, no cross-request cache leakage, rolePermissions
+                       # batches two roles in one query; schema.graphql emitted on
+                       # boot and non-empty (boots the app — needs local Postgres)
 npm run dev            # boot server; GraphQL at http://localhost:3000/graphql,
                        # health check at http://localhost:3000/health
 
@@ -42,3 +67,10 @@ no Docker/CI per docs/requirements.md §5.4. DB credentials come from `.env`
   room+time-range exclusion constraint (FR-33 backstop).
 - tsconfig is fully strict; entity properties use `!` because TypeORM populates
   them at runtime.
+- `runInTransaction` has no nesting guard: any service callable from inside an
+  existing transaction (S5 `AuditService`, S9 notification/email) must accept
+  the caller's EntityManager and never open its own transaction — opening one
+  internally is a bug, not a style choice (standing rule in docs/PLAN.md).
+- `createGraphQLContext` (app.ts) builds one fresh `createLoaders(dataSource)`
+  set per request (NFR-1); `createApp` rewrites `apps/server/schema.graphql`
+  on every boot — that file is the C0 codegen input.

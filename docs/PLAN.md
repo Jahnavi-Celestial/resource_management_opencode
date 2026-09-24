@@ -49,6 +49,16 @@ they're wrong; otherwise the plan below proceeds on this basis.
 | 8 | Bootstrap-admin credentials (email + initial password) are not specified anywhere in requirements.md | `ADMIN_EMAIL`/`ADMIN_PASSWORD` env vars (documented in `.env.example`, with local-dev defaults in code); `admin.seed.ts` creates the admin if missing and syncs its password to `ADMIN_PASSWORD` on every run; unset `ADMIN_PASSWORD` is a hard error when `NODE_ENV=production` | FR-5's "administrators create employees" needs one admin to pre-exist on a fresh DB; env-configured + synced keeps the bootstrap account seed-owned and deterministic while letting real deployments choose their own credentials |
 | 9 | FR-72 suggests the reserved system account be `system@internal` ("e.g."), which is not a syntactically valid email | Seed `system@internal.local` instead (`SYSTEM_EMPLOYEE_EMAIL` in `modules/employee/system-account.ts`) | The `.local` TLD is reserved (RFC 6762, never routable), so collision risk is nil, and login input validation can stay strict (`@IsEmail`) — the service-layer refusal of the system account then fires with the same uniform `UNAUTHENTICATED` response as unknown-email, instead of being short-circuited by a format error |
 
+### Standing rule — inner services never open their own transaction
+
+`runInTransaction` does not detect or guard against nesting. Any service
+method that may be called from within an existing transaction
+(`AuditService`, and later `NotificationService`/`EmailService` in S9) must
+accept the caller's `EntityManager` as a parameter rather than calling
+`runInTransaction` internally. This applies to every phase from S5 onward —
+a service method that opens its own transaction internally instead of
+accepting one is a bug, not a style choice.
+
 ---
 
 ## 1. Folder / module structure
@@ -84,7 +94,7 @@ resource_management/
     │       │   ├── pagination/        # PageArgs, SortInput, Paginated<T> (NFR-2)
     │       │   ├── graphql/           # GraphQLContext type, DateTime scalar
     │       │   ├── db/
-    │       │   │   └── transaction.ts # runInTransaction(mgr => ...) with tx.afterCommit(fn) — FR-90/NFR-3
+    │       │   │   └── transaction.ts # runInTransaction(mgr => ...) with tx.afterCommit(fn) — FR-90/NFR-3; no nesting guard (standing rule above)
     │       │   └── logging/           # pino instance
     │       ├── auth/
     │       │   ├── password.ts        # bcrypt hash/compare
