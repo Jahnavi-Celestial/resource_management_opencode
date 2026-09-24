@@ -58,16 +58,17 @@ FR-29: System shall display, for a selected equipment item and time window, a si
 3.6 Create Booking — booking:create
 FR-30: System shall allow an authenticated employee to create a new booking request.
 FR-31: System shall capture the following booking attributes:
-Meeting room (optional if equipment is selected)
-Equipment items and quantity per item (optional if a room is selected)
+Meeting room (required on every booking)
+Equipment items and quantity per item (optional — zero or more per booking)
 Start date and time
 End date and time
 Purpose
 Number of attendees
+Every booking must select exactly one meeting room; equipment items are optional and may be omitted entirely. The number of attendees is unconditionally required on every booking — whether equipment is included or not — and is never optional.
 FR-32: System shall reject a booking whose end time is not strictly after its start time, or whose start time is in the past.
 FR-33: System shall reject a booking that overlaps in time with an existing PENDING or APPROVED booking for the same room. Two windows overlap when newStart < existingEnd and newEnd > existingStart; back-to-back bookings that merely touch at a boundary are permitted.
-FR-34: System shall reject a booking whose number of attendees exceeds the capacity of the selected room.
-FR-35: System shall reject a booking whose requested equipment quantity exceeds the quantity free across the requested time window. Availability is derived, not stored — computed as quantityAvailable minus the sum of quantities committed to all overlapping PENDING and APPROVED bookings for that item. There is no separate mutable "committed" counter; booking status and time window are the sole source of truth for availability.
+FR-34: System shall reject a booking whose number of attendees exceeds the capacity of the selected room. Because every booking includes a room (FR-31), this capacity check applies unconditionally to every booking.
+FR-35: System shall reject a booking whose requested equipment quantity exceeds the quantity free across the requested time window. This check applies only when equipment items are included in the booking (FR-31 — equipment is optional); a room-only booking has no equipment quantity to validate. Availability is derived, not stored — computed as quantityAvailable minus the sum of quantities committed to all overlapping PENDING and APPROVED bookings for that item. There is no separate mutable "committed" counter; booking status and time window are the sole source of truth for availability.
 FR-36: System shall persist a new booking with status PENDING and shall run the overlap, capacity and inventory checks inside a single database transaction with appropriate row locking, so that two concurrent requests for the last remaining slot cannot both succeed.
 FR-37: System shall allow the booking owner to cancel a booking they created while it is PENDING, gated by the booking:cancel:own permission.
 FR-38: System shall confirm successful submission of a booking request to the user via an on-screen prompt reporting the booking's identifier and its status. The booking's UUID id is used as its reference throughout the system; there is no separate human-readable reference column.
@@ -169,7 +170,7 @@ Permission	id, permissionName
 RolePermission	id, roleId, permissionId
 MeetingRoom	id, name, location, capacity, isActive, createdAt, updatedAt
 Equipment	id, name, quantityAvailable, isActive, createdAt, updatedAt
-Booking	id, employeeId, roomId (nullable), startTime, endTime, purpose, rejectionReason, numberOfAttendees, status, createdAt, updatedAt
+Booking	id, employeeId, roomId, startTime, endTime, purpose, rejectionReason, numberOfAttendees, status, createdAt, updatedAt
 BookingEquipment	id, bookingId, equipmentId, quantity
 AuditLog	id, bookingId, action, oldStatus, newStatus, performedBy, createdAt
 Notification	id, recipientId, bookingId, type, title, message, isRead, createdAt
@@ -178,7 +179,7 @@ Relationships
 
 Employee ↔ Role is many-to-many through UserRole.
 Role ↔ Permission is many-to-many through RolePermission.
-Booking belongs to one Employee (the requester) and optionally to one MeetingRoom.
+Booking belongs to one Employee (the requester) and to exactly one MeetingRoom.
 Booking ↔ Equipment is many-to-many through BookingEquipment, which carries a quantity attribute.
 AuditLog and Notification each belong to one Booking and reference one Employee.
 

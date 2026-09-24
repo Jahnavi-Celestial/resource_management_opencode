@@ -6,6 +6,9 @@
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
     "create-db": "tsx scripts/create-db.ts",
+    "migrate": "tsx scripts/migrate.ts",
+    "migrate:revert": "tsx scripts/migrate-revert.ts",
+    "check-schema": "tsx scripts/check-schema.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
