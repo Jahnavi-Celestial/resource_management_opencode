@@ -18,6 +18,7 @@ import { EmployeeResolver } from './modules/employee/employee.resolver'
 import { PermissionResolver } from './modules/rbac/permission.resolver'
 import { RbacResolver } from './modules/rbac/rbac.resolver'
 import { RoleResolver } from './modules/rbac/role.resolver'
+import { RoomResolver } from './modules/room/room.resolver'
 
 function extractBearerToken(authorizationHeader: unknown): string | null {
   if (typeof authorizationHeader !== 'string') return null
@@ -38,7 +39,7 @@ export async function createGraphQLContext(dataSource: DataSource, req: Request)
 
 export async function createApp(dataSource: DataSource): Promise<express.Express> {
   const schema = await buildSchema({
-    resolvers: [AuthResolver, RoleResolver, PermissionResolver, RbacResolver, EmployeeResolver],
+    resolvers: [AuthResolver, RoleResolver, PermissionResolver, RbacResolver, EmployeeResolver, RoomResolver],
     authChecker,
     validate: true,
   })

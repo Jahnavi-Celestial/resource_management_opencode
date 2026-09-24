@@ -5,6 +5,7 @@ type Query {
   permissions(pageSize: Int! = 20, page: Int! = 1): PermissionPage!
   role(id: String!): Role!
   roles(pageSize: Int! = 20, page: Int! = 1): RolePage!
+  rooms(page: Int! = 1, pageSize: Int! = 20, search: String, minCapacity: Int, maxCapacity: Int, activeOnly: Boolean! = false, sort: SortInput): PaginatedRoom!
 }
 
 type MeType {
@@ -68,6 +69,21 @@ type RolePage {
   total: Int!
 }
 
+type PaginatedRoom {
+  items: [Room!]!
+  totalCount: Int!
+}
+
+type Room {
+  id: ID!
+  name: String!
+  location: String!
+  capacity: Int!
+  isActive: Boolean!
+  createdAt: DateTimeISO!
+  updatedAt: DateTimeISO!
+}
+
 type Mutation {
   login(input: LoginInput!): String!
   createEmployee(input: CreateEmployeeInput!): Employee!
@@ -80,6 +96,8 @@ type Mutation {
   createRole(input: CreateRoleInput!): Role!
   updateRole(input: UpdateRoleInput!): Role!
   deleteRole(id: String!): Boolean!
+  createRoom(input: CreateRoomInput!): Room!
+  updateRoom(input: UpdateRoomInput!): Room!
 }
 
 input LoginInput {
@@ -119,4 +137,18 @@ input CreateRoleInput {
 input UpdateRoleInput {
   id: ID!
   roleName: String!
+}
+
+input CreateRoomInput {
+  name: String!
+  location: String!
+  capacity: Int!
+}
+
+input UpdateRoomInput {
+  id: ID!
+  name: String
+  location: String
+  capacity: Int
+  isActive: Boolean
 }
