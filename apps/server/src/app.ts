@@ -14,6 +14,7 @@ import { resolveAuthContext } from './auth/resolve-auth-context'
 import { formatError } from './common/errors/format-error'
 import type { GraphQLContext } from './common/graphql/context'
 import { createLoaders } from './loaders'
+import { EmployeeResolver } from './modules/employee/employee.resolver'
 import { PermissionResolver } from './modules/rbac/permission.resolver'
 import { RbacResolver } from './modules/rbac/rbac.resolver'
 import { RoleResolver } from './modules/rbac/role.resolver'
@@ -37,7 +38,7 @@ export async function createGraphQLContext(dataSource: DataSource, req: Request)
 
 export async function createApp(dataSource: DataSource): Promise<express.Express> {
   const schema = await buildSchema({
-    resolvers: [AuthResolver, RoleResolver, PermissionResolver, RbacResolver],
+    resolvers: [AuthResolver, RoleResolver, PermissionResolver, RbacResolver, EmployeeResolver],
     authChecker,
     validate: true,
   })

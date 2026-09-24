@@ -1,5 +1,7 @@
 type Query {
   me: MeType!
+  employees(page: Int! = 1, pageSize: Int! = 20, search: String, sort: SortInput): PaginatedEmployee!
+  employee(id: String!): EmployeeDetail!
   permissions(pageSize: Int! = 20, page: Int! = 1): PermissionPage!
   role(id: String!): Role!
   roles(pageSize: Int! = 20, page: Int! = 1): RolePage!
@@ -36,6 +38,26 @@ type Permission {
   permissionName: String!
 }
 
+type PaginatedEmployee {
+  items: [Employee!]!
+  totalCount: Int!
+}
+
+input SortInput {
+  field: String!
+  direction: String! = "ASC"
+}
+
+type EmployeeDetail {
+  id: ID!
+  firstName: String!
+  lastName: String!
+  email: String!
+  createdAt: DateTimeISO!
+  updatedAt: DateTimeISO!
+  roles: [Role!]!
+}
+
 type PermissionPage {
   items: [Permission!]!
   total: Int!
@@ -48,6 +70,9 @@ type RolePage {
 
 type Mutation {
   login(input: LoginInput!): String!
+  createEmployee(input: CreateEmployeeInput!): Employee!
+  updateEmployee(input: UpdateEmployeeInput!): Employee!
+  deleteEmployee(id: String!): Boolean!
   assignPermissionToRole(input: RolePermissionInput!): Role!
   removePermissionFromRole(input: RolePermissionInput!): Role!
   assignRoleToEmployee(input: EmployeeRoleInput!): Employee!
@@ -60,6 +85,21 @@ type Mutation {
 input LoginInput {
   email: String!
   password: String!
+}
+
+input CreateEmployeeInput {
+  firstName: String!
+  lastName: String!
+  email: String!
+  password: String!
+}
+
+input UpdateEmployeeInput {
+  id: ID!
+  firstName: String
+  lastName: String
+  email: String
+  password: String
 }
 
 input RolePermissionInput {
