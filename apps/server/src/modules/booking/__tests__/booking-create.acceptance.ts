@@ -8,6 +8,8 @@ import { Employee } from '../../employee/employee.entity'
 import { MeetingRoom } from '../../room/room.entity'
 import { Equipment } from '../../equipment/equipment.entity'
 import { InputValidationError } from '../../../common/errors/field-errors'
+import { DomainError } from '../../../common/errors/domain-error'
+import { Booking } from '../booking.entity'
 
 async function main(): Promise<void> {
   const configuredDataSource = await dataSourceModule.createDataSource()
@@ -224,7 +226,9 @@ async function main(): Promise<void> {
     const equipmentWindow = futureWindow(60)
     await service.createBooking(
       employeeId,
-      baseInput(equipmentRoomId, equipmentWindow, { equipment: [{ equipmentId, quantity: 2 }] }),
+      baseInput(equipmentRoomId, equipmentWindow, {
+        equipment: [{ equipmentId: equipmentId.toUpperCase(), quantity: 2 }],
+      }),
     )
     await assertFailure(
       '6 equipment quantity exceeding availability',
@@ -322,6 +326,64 @@ async function main(): Promise<void> {
       /room capacity exceeded/i,
     )
     await assertBookingWithoutRows('10 rollback proof', beforeRollback)
+
+    // --- 11 room concurrency: N simultaneous createBooking calls for one slot ---
+    const concEmployeeId = await createEmployee()
+    const concRoom = await createRoom(1)
+    const concWindow = futureWindow(48)
+    const CONCURRENCY = 10
+    const concInputs = Array.from({ length: CONCURRENCY }, () =>
+      baseInput(concRoom, concWindow),
+    )
+    const beforeRoomConcCount = await count('booking')
+    const concResults = await Promise.allSettled(
+      concInputs.map((input) => service.createBooking(concEmployeeId, input)),
+    )
+    const concSuccesses = concResults.filter((r): r is PromiseFulfilledResult<Booking> => r.status === 'fulfilled')
+    const concFailures = concResults.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+    assert.equal(concSuccesses.length, 1, `Expected exactly 1 room-concurrency success, got ${concSuccesses.length}`)
+    assert.equal(concFailures.length, CONCURRENCY - 1, `Expected ${CONCURRENCY - 1} room-concurrency failures, got ${concFailures.length}`)
+    concFailures.forEach((f) => {
+      assert.ok(f.reason instanceof DomainError, `Room-concurrency failure should be a DomainError, got ${f.reason?.constructor?.name}`)
+      assert.match(f.reason.message, /room is not available/i)
+    })
+    const roomConcBookingCount = await count('booking')
+    assert.equal(roomConcBookingCount - beforeRoomConcCount, 1, `Room concurrency: exactly 1 new booking row`)
+    const roomConcBooking = concSuccesses[0]!.value
+    assert.equal(roomConcBooking.status, 'PENDING')
+    console.log(`PASS 11 room concurrency: ${CONCURRENCY} parallel calls → ${concSuccesses.length} success, ${concFailures.length} domain errors, 1 booking row`)
+
+    // --- 12 equipment concurrency: N simultaneous calls for quantity=1 unit ---
+    const eqConcEmployeeId = await createEmployee()
+    const eqConcRoom = await createRoom(1)
+    const eqConcEquipment = await createEquipment(1)
+    const eqConcWindow = futureWindow(49)
+    const eqConcInputs = Array.from({ length: CONCURRENCY }, () =>
+      baseInput(eqConcRoom, eqConcWindow, {
+        equipment: [{ equipmentId: eqConcEquipment, quantity: 1 }],
+      }),
+    )
+    const beforeEqConcCount = await count('booking')
+    const eqConcResults = await Promise.allSettled(
+      eqConcInputs.map((input) => service.createBooking(eqConcEmployeeId, input)),
+    )
+    const eqSuccesses = eqConcResults.filter((r): r is PromiseFulfilledResult<Booking> => r.status === 'fulfilled')
+    const eqFailures = eqConcResults.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+    const [eqWinner] = eqSuccesses
+    assert.equal(eqSuccesses.length, 1, `Expected exactly 1 equipment-concurrency success, got ${eqSuccesses.length}`)
+    assert.equal(eqFailures.length, CONCURRENCY - 1, `Expected ${CONCURRENCY - 1} equipment-concurrency failures, got ${eqFailures.length}`)
+    eqFailures.forEach((f) => {
+      assert.ok(f.reason instanceof DomainError, `Equipment-concurrency failure should be a DomainError, got ${f.reason?.constructor?.name}`)
+      assert.match(f.reason.message, /not available/i)
+    })
+    const eqConcBookingCount = await count('booking')
+    assert.equal(eqConcBookingCount - beforeEqConcCount, 1, `Equipment concurrency: exactly 1 new booking row`)
+    const eqConcEquipmentLines = await dataSource.query(
+      `SELECT COUNT(*)::int AS count FROM booking_equipment WHERE booking_id = $1`,
+      [(eqSuccesses[0] as PromiseFulfilledResult<Booking>).value.id],
+    )
+    assert.equal(Number(eqConcEquipmentLines[0].count), 1, `Equipment concurrency: winner has exactly 1 booking_equipment row`)
+    console.log(`PASS 12 equipment concurrency: ${CONCURRENCY} parallel calls → ${eqSuccesses.length} success, ${eqFailures.length} domain errors, 1 winner, 1 booking_equipment row`)
 
     console.log('ALL BOOKING CREATE VALIDATION TESTS PASSED')
   } finally {

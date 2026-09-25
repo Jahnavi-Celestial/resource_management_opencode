@@ -8,7 +8,14 @@ import { runInTransaction } from '../../common/db/transaction'
 import { isRoomAvailable, getEquipmentFreeQuantity } from './availability'
 import { Booking } from './booking.entity'
 import { validateCreateBookingInput, type CreateBookingInput } from './booking.inputs'
-import { BookingRepository } from './booking.repository'
+import {
+  BookingRepository,
+  type BookingListFilter,
+  type BookingPage,
+  type BookingReadScope,
+} from './booking.repository'
+import type { PaginationArgs } from '../../common/pagination/apply-pagination'
+import type { SortInput } from '../../common/pagination/sort-input'
 
 export class BookingService {
   constructor(
@@ -16,6 +23,19 @@ export class BookingService {
     private readonly repository: BookingRepository = new BookingRepository(),
     private readonly auditService: AuditService = new AuditService(),
   ) {}
+
+  async list(
+    scope: BookingReadScope,
+    pagination: PaginationArgs,
+    sort: SortInput | null | undefined,
+    filter: BookingListFilter | null | undefined,
+  ): Promise<BookingPage> {
+    return this.repository.findPage(this.dataSource.manager, scope, pagination, sort, filter)
+  }
+
+  async getVisibleById(bookingId: string, scope: BookingReadScope): Promise<Booking | null> {
+    return this.repository.findVisibleById(this.dataSource.manager, bookingId, scope)
+  }
 
   async createBooking(employeeId: string, input: CreateBookingInput): Promise<Booking>
   async createBooking(input: CreateBookingInput, employeeId: string): Promise<Booking>

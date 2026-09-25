@@ -14,6 +14,15 @@
     "check-schema": "npm run check-schema -w apps/server",
     "seed": "npm run seed -w apps/server",
     "test:s2": "npm run test:s2 -w apps/server",
+    "test:pagination": "npm run test:pagination -w apps/server",
+    "test:validation": "npm run test:validation -w apps/server",
+    "test:transaction": "npm run test:transaction -w apps/server",
+    "test:loaders": "npm run test:loaders -w apps/server",
+    "test:s4": "npm run test:s4 -w apps/server",
+    "test:s5": "npm run test:s5 -w apps/server",
+    "test:booking-list": "npm run test:booking-list -w apps/server",
+    "test:booking-create": "npm run test:booking-create -w apps/server",
+    "test:booking-detail": "npm run test:booking-detail -w apps/server",
     "typecheck": "npm run typecheck -w packages/shared && npm run typecheck -w apps/server"
   },
   "engines": {

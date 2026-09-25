@@ -15,6 +15,9 @@
     "test:validation": "tsx scripts/test-validation-errors.ts",
     "test:transaction": "tsx scripts/test-transaction.ts",
     "test:loaders": "tsx scripts/test-loaders.ts",
+    "test:booking-list": "tsx src/modules/booking/__tests__/booking-list.acceptance.ts",
+    "test:booking-create": "tsx src/modules/booking/__tests__/booking-create.acceptance.ts",
+    "test:booking-detail": "tsx src/modules/booking/__tests__/booking-detail.acceptance.ts",
     "test:s4": "tsx scripts/acceptance-s4.ts",
     "test:s5": "tsx scripts/acceptance-s5.ts",
     "typecheck": "tsc --noEmit"

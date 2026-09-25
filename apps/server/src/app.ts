@@ -14,6 +14,7 @@ import { resolveAuthContext } from './auth/resolve-auth-context'
 import { formatError } from './common/errors/format-error'
 import type { GraphQLContext } from './common/graphql/context'
 import { createLoaders } from './loaders'
+import { BookingResolver } from './modules/booking/booking.resolver'
 import { EmployeeResolver } from './modules/employee/employee.resolver'
 import { EquipmentResolver } from './modules/equipment/equipment.resolver'
 import { AuditResolver } from './modules/audit/audit.resolver'
@@ -49,6 +50,7 @@ export async function createApp(dataSource: DataSource): Promise<express.Express
       EmployeeResolver,
       RoomResolver,
       EquipmentResolver,
+      BookingResolver,
       AuditResolver,
     ],
     authChecker,

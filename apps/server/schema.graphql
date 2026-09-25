@@ -1,5 +1,7 @@
 type Query {
   me: MeType!
+  bookings(filter: BookingFilterInput, sort: SortInput, page: Int! = 1, pageSize: Int! = 20): PaginatedBookings!
+  booking(id: ID!): BookingType!
   employees(page: Int! = 1, pageSize: Int! = 20, search: String, sort: SortInput): PaginatedEmployee!
   employee(id: String!): Employee!
   equipment(page: Int! = 1, pageSize: Int! = 20, search: String, activeOnly: Boolean! = false, sort: SortInput): PaginatedEquipment!
@@ -42,14 +44,98 @@ type Permission {
   permissionName: String!
 }
 
-type PaginatedEmployee {
-  items: [Employee!]!
+type PaginatedBookings {
+  items: [BookingType!]!
   totalCount: Int!
+}
+
+type BookingType {
+  id: ID!
+  employeeId: ID
+  roomId: ID!
+  startTime: DateTimeISO!
+  endTime: DateTimeISO!
+  purpose: String!
+  rejectionReason: String
+  numberOfAttendees: Int!
+  status: BookingListStatus!
+  createdAt: DateTimeISO!
+  updatedAt: DateTimeISO!
+  processedAt: DateTimeISO
+  processedBy: BookingActor
+  statusHistory: [BookingStatusTransition!]!
+  requester: BookingRequester!
+  room: BookingRoom!
+  equipmentLines: [BookingEquipmentDetail!]!
+}
+
+enum BookingListStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  COMPLETED
+}
+
+type BookingActor {
+  id: ID
+  name: String!
+}
+
+type BookingStatusTransition {
+  id: ID!
+  oldStatus: BookingListStatus
+  newStatus: BookingListStatus!
+  actor: BookingActor!
+  transitionedAt: DateTimeISO!
+}
+
+type BookingRequester {
+  id: ID
+  name: String!
+  email: String!
+  recentBookings: [BookingSummary!]!
+}
+
+type BookingSummary {
+  id: ID!
+  startTime: DateTimeISO!
+  endTime: DateTimeISO!
+  purpose: String!
+  status: BookingListStatus!
+}
+
+type BookingRoom {
+  id: ID!
+  name: String!
+  location: String!
+  capacity: Int!
+  otherBookings: [BookingSummary!]!
+}
+
+type BookingEquipmentDetail {
+  id: ID!
+  equipmentId: ID!
+  name: String!
+  requestedQuantity: Int!
+  remainingAvailability: Int!
+}
+
+input BookingFilterInput {
+  search: String
+  status: BookingListStatus
+  startDate: DateTimeISO
+  endDate: DateTimeISO
 }
 
 input SortInput {
   field: String!
   direction: String! = "ASC"
+}
+
+type PaginatedEmployee {
+  items: [Employee!]!
+  totalCount: Int!
 }
 
 type PaginatedEquipment {
