@@ -1,0 +1,101 @@
+import type { DataSource } from 'typeorm'
+import { AuditService } from '../audit/audit.service'
+import type { AuditAction } from '../audit/audit-log.entity'
+import { DomainError } from '../../common/errors/domain-error'
+import { ConflictError } from '../../common/errors/conflict-error'
+import { NotFoundError } from '../../common/errors/not-found-error'
+import { runInTransaction } from '../../common/db/transaction'
+import { isRoomAvailable, getEquipmentFreeQuantity } from './availability'
+import { Booking } from './booking.entity'
+import { validateCreateBookingInput, type CreateBookingInput } from './booking.inputs'
+import { BookingRepository } from './booking.repository'
+
+export class BookingService {
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly repository: BookingRepository = new BookingRepository(),
+    private readonly auditService: AuditService = new AuditService(),
+  ) {}
+
+  async createBooking(employeeId: string, input: CreateBookingInput): Promise<Booking>
+  async createBooking(input: CreateBookingInput, employeeId: string): Promise<Booking>
+  async createBooking(
+    first: string | CreateBookingInput,
+    second: string | CreateBookingInput,
+  ): Promise<Booking> {
+    const employeeId = typeof first === 'string' ? first : (second as string)
+    const input = typeof first === 'string' ? (second as CreateBookingInput) : first
+    const validatedInput = await validateCreateBookingInput(input)
+
+    if (typeof employeeId !== 'string' || employeeId.length === 0) {
+      throw new DomainError('An authenticated employee is required')
+    }
+
+    return runInTransaction(this.dataSource, async (manager) => {
+      const startTime = new Date(validatedInput.startTime)
+      const endTime = new Date(validatedInput.endTime)
+
+      if (endTime.getTime() <= startTime.getTime()) {
+        throw new DomainError('Booking end time must be strictly after start time')
+      }
+
+      if (startTime.getTime() < Date.now()) {
+        throw new DomainError('Booking start time must not be in the past')
+      }
+
+      await this.repository.lockResources(
+        manager,
+        validatedInput.roomId,
+        (validatedInput.equipment ?? []).map((item) => item.equipmentId),
+      )
+
+      const room = await this.repository.findRoom(manager, validatedInput.roomId)
+      if (room === null) {
+        throw new NotFoundError('The selected room was not found')
+      }
+
+      if (!room.isActive) {
+        throw new DomainError('The selected room is inactive')
+      }
+
+      if (validatedInput.numberOfAttendees > room.capacity) {
+        throw new ConflictError(
+          `Room capacity exceeded: ${validatedInput.numberOfAttendees} attendees requested for a room with capacity ${room.capacity}`,
+        )
+      }
+
+      if (!(await isRoomAvailable(manager, room.id, startTime, endTime))) {
+        throw new ConflictError('The selected room is not available for the requested time range')
+      }
+
+      for (const item of validatedInput.equipment ?? []) {
+        const freeQuantity = await getEquipmentFreeQuantity(manager, item.equipmentId, startTime, endTime)
+        if (item.quantity > freeQuantity) {
+          throw new ConflictError(
+            `Equipment ${item.equipmentId} is not available: requested ${item.quantity}, ${freeQuantity} free`,
+          )
+        }
+      }
+
+      const booking = await this.repository.insert(manager, {
+        employeeId,
+        roomId: room.id,
+        startTime,
+        endTime,
+        purpose: validatedInput.purpose,
+        numberOfAttendees: validatedInput.numberOfAttendees,
+      })
+
+      await this.repository.insertEquipment(manager, booking.id, validatedInput.equipment ?? [])
+      await this.auditService.record(manager, {
+        bookingId: booking.id,
+        action: 'CREATE' as AuditAction,
+        oldStatus: null,
+        newStatus: 'PENDING',
+        performedById: employeeId,
+      })
+
+      return booking
+    })
+  }
+}
