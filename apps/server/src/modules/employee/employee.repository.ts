@@ -2,8 +2,6 @@ import type { EntityManager } from 'typeorm'
 import { isUuid } from '../../common/db/uuid'
 import { applyPagination } from '../../common/pagination/apply-pagination'
 import type { SortableFields } from '../../common/pagination/sort-input'
-import { Role } from '../rbac/role.entity'
-import { UserRole } from '../rbac/user-role.entity'
 import type { EmployeeListArgs } from './employee.inputs'
 import { Employee } from './employee.entity'
 import { SYSTEM_EMPLOYEE_EMAIL } from './system-account'
@@ -83,16 +81,5 @@ export class EmployeeRepository {
     qb.addOrderBy('employee.id', 'ASC')
     const [items, total] = await qb.getManyAndCount()
     return { items, total }
-  }
-
-  async findRolesByEmployeeId(employeeId: string): Promise<Role[]> {
-    if (!isUuid(employeeId)) return []
-    return this.em
-      .getRepository(Role)
-      .createQueryBuilder('role')
-      .innerJoin(UserRole, 'userRole', 'userRole.role_id = role.id')
-      .where('userRole.employee_id = :employeeId', { employeeId })
-      .orderBy('role.role_name', 'ASC')
-      .getMany()
   }
 }

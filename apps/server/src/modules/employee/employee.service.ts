@@ -3,7 +3,6 @@ import { hashPassword } from '../../auth/password'
 import { ConflictError } from '../../common/errors/conflict-error'
 import { InputValidationError } from '../../common/errors/field-errors'
 import { NotFoundError } from '../../common/errors/not-found-error'
-import type { Role } from '../rbac/role.entity'
 import type { CreateEmployeeInput, EmployeeListArgs, UpdateEmployeeInput } from './employee.inputs'
 import { Employee } from './employee.entity'
 import { EmployeeRepository } from './employee.repository'
@@ -90,10 +89,9 @@ export class EmployeeService {
     return this.repository.list(args)
   }
 
-  async getDetail(id: string): Promise<{ employee: Employee; roles: Role[] }> {
+  async getById(id: string): Promise<Employee> {
     const employee = await this.repository.findById(id)
     if (employee === null) throw new NotFoundError('Employee not found')
-    const roles = await this.repository.findRolesByEmployeeId(employee.id)
-    return { employee, roles }
+    return employee
   }
 }

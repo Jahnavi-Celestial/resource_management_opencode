@@ -1,16 +1,11 @@
-import { Arg, Args, Authorized, Ctx, Mutation, Query, Resolver } from 'type-graphql'
+import { Arg, Args, Authorized, Ctx, FieldResolver, Mutation, Query, Resolver, Root } from 'type-graphql'
 import { AuthorisationError } from '../../common/errors/authorisation-error'
 import type { GraphQLContext } from '../../common/graphql/context'
 import type { Paginated } from '../../common/pagination/paginated'
+import { RoleType, toRoleType } from '../rbac/rbac.types'
 import { CreateEmployeeInput, EmployeeListArgs, UpdateEmployeeInput } from './employee.inputs'
 import { EmployeeService } from './employee.service'
-import {
-  EmployeeDetailType,
-  EmployeeType,
-  PaginatedEmployees,
-  toEmployeeDetailType,
-  toEmployeeType,
-} from './employee.types'
+import { EmployeeType, PaginatedEmployees, toEmployeeType } from './employee.types'
 
 @Resolver(() => EmployeeType)
 export class EmployeeResolver {
@@ -25,15 +20,20 @@ export class EmployeeResolver {
     return { items: items.map(toEmployeeType), totalCount: total }
   }
 
-  @Query(() => EmployeeDetailType)
+  @Query(() => EmployeeType)
   @Authorized('employee:read')
   async employee(
     @Arg('id', () => String) id: string,
     @Ctx() context: GraphQLContext,
-  ): Promise<EmployeeDetailType> {
+  ): Promise<EmployeeType> {
     const service = new EmployeeService(context.dataSource)
-    const { employee, roles } = await service.getDetail(id)
-    return toEmployeeDetailType(employee, roles)
+    return toEmployeeType(await service.getById(id))
+  }
+
+  @FieldResolver(() => [RoleType])
+  async roles(@Root() employee: EmployeeType, @Ctx() context: GraphQLContext): Promise<RoleType[]> {
+    const roles = await context.loaders.employeeRoles.load(employee.id)
+    return roles.map(toRoleType)
   }
 
   @Mutation(() => EmployeeType)

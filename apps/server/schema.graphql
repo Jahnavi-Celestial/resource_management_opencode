@@ -1,8 +1,9 @@
 type Query {
   me: MeType!
   employees(page: Int! = 1, pageSize: Int! = 20, search: String, sort: SortInput): PaginatedEmployee!
-  employee(id: String!): EmployeeDetail!
+  employee(id: String!): Employee!
   equipment(page: Int! = 1, pageSize: Int! = 20, search: String, activeOnly: Boolean! = false, sort: SortInput): PaginatedEquipment!
+  auditLogs(filter: AuditLogFilter, sort: SortInput, page: Int! = 1, pageSize: Int! = 20, bookingId: ID, actorId: ID, performedById: ID, action: AuditAction, status: BookingStatus, from: DateTimeISO, to: DateTimeISO): PaginatedAuditLogs!
   permissions(pageSize: Int! = 20, page: Int! = 1): PermissionPage!
   role(id: String!): Role!
   roles(pageSize: Int! = 20, page: Int! = 1): RolePage!
@@ -22,6 +23,7 @@ type Employee {
   email: String!
   createdAt: DateTimeISO!
   updatedAt: DateTimeISO!
+  roles: [Role!]!
 }
 
 """
@@ -50,16 +52,6 @@ input SortInput {
   direction: String! = "ASC"
 }
 
-type EmployeeDetail {
-  id: ID!
-  firstName: String!
-  lastName: String!
-  email: String!
-  createdAt: DateTimeISO!
-  updatedAt: DateTimeISO!
-  roles: [Role!]!
-}
-
 type PaginatedEquipment {
   items: [Equipment!]!
   totalCount: Int!
@@ -72,6 +64,60 @@ type Equipment {
   isActive: Boolean!
   createdAt: DateTimeISO!
   updatedAt: DateTimeISO!
+}
+
+type PaginatedAuditLogs {
+  items: [AuditLog!]!
+  totalCount: Int!
+}
+
+type AuditLog {
+  id: ID!
+  bookingId: ID!
+  action: AuditAction!
+  oldStatus: BookingStatus
+  newStatus: BookingStatus!
+  performedById: ID
+  performedBy: AuditActor
+  performedByName: String!
+  performedByDisplayName: String!
+  createdAt: DateTimeISO!
+}
+
+enum AuditAction {
+  CREATE
+  APPROVE
+  REJECT
+  CANCEL
+  COMPLETE
+}
+
+enum BookingStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  COMPLETED
+}
+
+type AuditActor {
+  id: ID!
+  firstName: String!
+  lastName: String!
+  email: String!
+  displayName: String!
+}
+
+input AuditLogFilter {
+  bookingId: ID
+  actorId: ID
+  performedById: ID
+  action: AuditAction
+  status: BookingStatus
+  from: DateTimeISO
+  to: DateTimeISO
+  startDate: DateTimeISO
+  endDate: DateTimeISO
 }
 
 type PermissionPage {

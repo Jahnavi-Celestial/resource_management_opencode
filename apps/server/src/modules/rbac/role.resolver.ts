@@ -1,7 +1,6 @@
 import { Arg, Authorized, Ctx, FieldResolver, Int, Mutation, Query, Resolver, Root } from 'type-graphql'
 import type { GraphQLContext } from '../../common/graphql/context'
 import { CreateRoleInput, UpdateRoleInput } from './role.inputs'
-import { PermissionRepository } from './permission.repository'
 import { RoleService } from './role.service'
 import { PermissionType, RolePage, RoleType, toPermissionType, toRoleType } from './rbac.types'
 
@@ -56,8 +55,7 @@ export class RoleResolver {
 
   @FieldResolver(() => [PermissionType])
   async permissions(@Root() role: RoleType, @Ctx() context: GraphQLContext): Promise<PermissionType[]> {
-    const repository = new PermissionRepository(context.dataSource.manager)
-    const permissions = await repository.listForRole(role.id)
+    const permissions = await context.loaders.rolePermissions.load(role.id)
     return permissions.map(toPermissionType)
   }
 }

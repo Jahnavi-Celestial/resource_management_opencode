@@ -16,6 +16,7 @@ import type { GraphQLContext } from './common/graphql/context'
 import { createLoaders } from './loaders'
 import { EmployeeResolver } from './modules/employee/employee.resolver'
 import { EquipmentResolver } from './modules/equipment/equipment.resolver'
+import { AuditResolver } from './modules/audit/audit.resolver'
 import { PermissionResolver } from './modules/rbac/permission.resolver'
 import { RbacResolver } from './modules/rbac/rbac.resolver'
 import { RoleResolver } from './modules/rbac/role.resolver'
@@ -48,6 +49,7 @@ export async function createApp(dataSource: DataSource): Promise<express.Express
       EmployeeResolver,
       RoomResolver,
       EquipmentResolver,
+      AuditResolver,
     ],
     authChecker,
     validate: true,
