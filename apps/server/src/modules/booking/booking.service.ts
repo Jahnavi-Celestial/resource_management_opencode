@@ -98,4 +98,61 @@ export class BookingService {
       return booking
     })
   }
+
+  async cancelOwnBooking(employeeId: string, bookingId: string): Promise<Booking> {
+    return this.cancelBooking(employeeId, bookingId, true)
+  }
+
+  async cancelAnyBooking(employeeId: string, bookingId: string): Promise<Booking> {
+    return this.cancelBooking(employeeId, bookingId, false)
+  }
+
+  private async cancelBooking(
+    employeeId: string,
+    bookingId: string,
+    ownBookingOnly: boolean,
+  ): Promise<Booking> {
+    if (typeof employeeId !== 'string' || employeeId.length === 0) {
+      throw new DomainError('An authenticated employee is required')
+    }
+
+    if (typeof bookingId !== 'string' || bookingId.length === 0) {
+      throw new DomainError('A booking is required')
+    }
+
+    return runInTransaction(this.dataSource, async (manager) => {
+      const booking = await this.repository.findForUpdate(manager, bookingId)
+
+      if (booking === null) {
+        throw new NotFoundError('The booking was not found')
+      }
+
+      if (ownBookingOnly && booking.employeeId !== employeeId) {
+        throw new DomainError('Only the booking requester can cancel this booking')
+      }
+
+      const cancellable = ownBookingOnly
+        ? booking.status === 'PENDING'
+        : booking.status === 'PENDING' || booking.status === 'APPROVED'
+
+      if (!cancellable) {
+        throw new DomainError(
+          `Booking cannot be cancelled from its current status: ${booking.status}`,
+        )
+      }
+
+      const oldStatus = booking.status
+      const cancelledBooking = await this.repository.updateStatus(manager, booking, 'CANCELLED')
+
+      await this.auditService.record(manager, {
+        bookingId: cancelledBooking.id,
+        action: 'CANCEL' as AuditAction,
+        oldStatus,
+        newStatus: 'CANCELLED',
+        performedById: employeeId,
+      })
+
+      return cancelledBooking
+    })
+  }
 }

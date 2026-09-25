@@ -69,6 +69,24 @@ export class BookingRepository {
     return manager.getRepository(MeetingRoom).findOne({ where: { id: roomId } })
   }
 
+  async findForUpdate(manager: EntityManager, bookingId: string): Promise<Booking | null> {
+    return manager
+      .getRepository(Booking)
+      .createQueryBuilder('booking')
+      .where('booking.id = :bookingId', { bookingId })
+      .setLock('pessimistic_write')
+      .getOne()
+  }
+
+  async updateStatus(
+    manager: EntityManager,
+    booking: Booking,
+    status: Booking['status'],
+  ): Promise<Booking> {
+    booking.status = status
+    return manager.getRepository(Booking).save(booking)
+  }
+
   async insert(manager: EntityManager, data: InsertBookingData): Promise<Booking> {
     const repository = manager.getRepository(Booking)
     return repository.save(
