@@ -5,11 +5,13 @@ type Query {
   employees(page: Int! = 1, pageSize: Int! = 20, search: String, sort: SortInput): PaginatedEmployee!
   employee(id: String!): Employee!
   equipment(page: Int! = 1, pageSize: Int! = 20, search: String, activeOnly: Boolean! = false, sort: SortInput): PaginatedEquipment!
+  equipmentAvailability(endDate: DateTimeISO!, startDate: DateTimeISO!, equipmentId: String!): EquipmentAvailabilityResult!
   auditLogs(filter: AuditLogFilter, sort: SortInput, page: Int! = 1, pageSize: Int! = 20, bookingId: ID, actorId: ID, performedById: ID, action: AuditAction, status: BookingStatus, from: DateTimeISO, to: DateTimeISO): PaginatedAuditLogs!
   permissions(pageSize: Int! = 20, page: Int! = 1): PermissionPage!
   role(id: String!): Role!
   roles(pageSize: Int! = 20, page: Int! = 1): RolePage!
   rooms(page: Int! = 1, pageSize: Int! = 20, search: String, minCapacity: Int, maxCapacity: Int, activeOnly: Boolean! = false, sort: SortInput): PaginatedRoom!
+  roomAvailability(endDate: DateTimeISO!, startDate: DateTimeISO!, roomId: String!): [RoomBookingSummary!]!
 }
 
 type MeType {
@@ -26,6 +28,7 @@ type Employee {
   createdAt: DateTimeISO!
   updatedAt: DateTimeISO!
   roles: [Role!]!
+  bookingHistory: [EmployeeBookingSummary!]
 }
 
 """
@@ -42,6 +45,14 @@ type Role {
 type Permission {
   id: ID!
   permissionName: String!
+}
+
+type EmployeeBookingSummary {
+  id: ID!
+  startTime: DateTimeISO!
+  endTime: DateTimeISO!
+  purpose: String!
+  status: String!
 }
 
 type PaginatedBookings {
@@ -152,6 +163,13 @@ type Equipment {
   updatedAt: DateTimeISO!
 }
 
+type EquipmentAvailabilityResult {
+  equipmentId: ID!
+  name: String!
+  quantityAvailable: Int!
+  remainingAvailability: Int!
+}
+
 type PaginatedAuditLogs {
   items: [AuditLog!]!
   totalCount: Int!
@@ -229,6 +247,15 @@ type Room {
   isActive: Boolean!
   createdAt: DateTimeISO!
   updatedAt: DateTimeISO!
+  availability: [RoomBookingSummary!]
+}
+
+type RoomBookingSummary {
+  id: ID!
+  startTime: DateTimeISO!
+  endTime: DateTimeISO!
+  purpose: String!
+  status: String!
 }
 
 type Mutation {

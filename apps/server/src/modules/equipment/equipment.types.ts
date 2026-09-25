@@ -34,4 +34,19 @@ export function toEquipmentType(equipment: Equipment): EquipmentType {
   return type
 }
 
+@ObjectType('EquipmentAvailabilityResult')
+export class EquipmentAvailabilityResult {
+  @Field(() => ID)
+  equipmentId!: string
+
+  @Field(() => String)
+  name!: string
+
+  @Field(() => Int)
+  quantityAvailable!: number
+
+  @Field(() => Int)
+  remainingAvailability!: number
+}
+
 export const PaginatedEquipment = createPaginatedType(EquipmentType, 'Equipment')

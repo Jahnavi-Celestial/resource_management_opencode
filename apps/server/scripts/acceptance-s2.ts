@@ -302,7 +302,7 @@ async function test6NoPasswordFieldInSchema(): Promise<void> {
   const employeeType = await gql('query { __type(name: "Employee") { name fields { name } } }')
   const employeeTypeData = (employeeType.data as { __type?: { name: string; fields: Array<{ name: string }> | null } } | null | undefined)?.__type
   const fieldNames = employeeTypeData?.fields?.map((f) => f.name) ?? []
-  check('Employee type exposes exactly the safe profile fields', fieldNames.sort().join(',') === 'createdAt,email,firstName,id,lastName,roles,updatedAt', `fields=${JSON.stringify(fieldNames.sort())}`)
+  check('Employee type exposes exactly the safe profile fields', fieldNames.sort().join(',') === 'bookingHistory,createdAt,email,firstName,id,lastName,roles,updatedAt', `fields=${JSON.stringify(fieldNames.sort())}`)
 
   const fullSchema = await gql('query { __schema { queryType { name } mutationType { name } types { name fields { name } } } }')
   const schemaData = fullSchema.data as { __schema?: { queryType: { name: string }; mutationType: { name: string }; types: Array<{ name: string; fields: Array<{ name: string }> | null }> } } | null | undefined

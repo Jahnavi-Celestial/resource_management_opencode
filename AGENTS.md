@@ -17,7 +17,10 @@ Loaders (`src/loaders/`: employee, rolePermissions stubs, one fresh set per
 request via `createGraphQLContext`) and schema emission
 (`apps/server/schema.graphql`, rewritten on every boot) are in place —
 `npm run test:loaders` proves per-request isolation and no cross-request
-cache leakage. S3 is complete; the client (C0+) is not started yet.
+cache leakage. S4 (employee/room/equipment CRUD), S5 (audit), S6 (booking
+create/cancel with concurrency), S7 (list/detail/availability reads, FR-10,
+FR-23, FR-29) are all complete and their acceptance suites pass.
+The client (C0+) is not started yet.
 
 ## Commands
 
@@ -36,12 +39,16 @@ npm run test:validation # NFR-6: invalid input → extensions.fieldErrors + BAD_
                        # no value echo/leak; S2 FORBIDDEN/UNAUTHENTICATED shapes unchanged
                        # (boots the app — needs local Postgres)
 npm run test:transaction # runInTransaction/afterCommit: callback fires once on commit,
-                       # zero times on rollback, writes durable/rolled back correctly
-                       # (writes real rows — needs local Postgres)
+                        # zero times on rollback, writes durable/rolled back correctly
+                        # (writes real rows — needs local Postgres)
 npm run test:loaders   # NFR-1: concurrent requests get separate DataLoader
-                       # instances, no cross-request cache leakage, rolePermissions
-                       # batches two roles in one query; schema.graphql emitted on
-                       # boot and non-empty (boots the app — needs local Postgres)
+                        # instances, no cross-request cache leakage, rolePermissions
+                        # batches two roles in one query; schema.graphql emitted on
+                        # boot and non-empty (boots the app — needs local Postgres)
+npm run test:booking-list # booking list acceptance tests
+npm run test:booking-detail # booking detail acceptance tests
+npm run test:booking-create # booking create + concurrency acceptance tests (12 scenarios)
+npm run test:booking-availability # S7 availability views (FR-23/29) + employee history (FR-10)
 npm run dev            # boot server; GraphQL at http://localhost:3000/graphql,
                        # health check at http://localhost:3000/health
 

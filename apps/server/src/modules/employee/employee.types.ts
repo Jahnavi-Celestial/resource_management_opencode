@@ -25,6 +25,27 @@ export class EmployeeType {
 
   @Field(() => [RoleType])
   roles?: RoleType[]
+
+  @Field(() => [EmployeeBookingSummary], { nullable: true })
+  bookingHistory!: EmployeeBookingSummary[] | null
+}
+
+@ObjectType('EmployeeBookingSummary')
+export class EmployeeBookingSummary {
+  @Field(() => ID)
+  id!: string
+
+  @Field(() => Date)
+  startTime!: Date
+
+  @Field(() => Date)
+  endTime!: Date
+
+  @Field(() => String)
+  purpose!: string
+
+  @Field(() => String)
+  status!: string
 }
 
 export function toEmployeeType(employee: Employee): EmployeeType {
@@ -35,6 +56,8 @@ export function toEmployeeType(employee: Employee): EmployeeType {
   type.email = employee.email
   type.createdAt = employee.createdAt
   type.updatedAt = employee.updatedAt
+  type.roles = []
+  type.bookingHistory = []
   return type
 }
 

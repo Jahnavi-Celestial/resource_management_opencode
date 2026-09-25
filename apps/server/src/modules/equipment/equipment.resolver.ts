@@ -1,10 +1,13 @@
 import { Arg, Args, Authorized, Ctx, Mutation, Query, Resolver } from 'type-graphql'
+import { GraphQLISODateTime } from 'type-graphql'
+import type { DataSource } from 'typeorm'
 import type { GraphQLContext } from '../../common/graphql/context'
 import type { Paginated } from '../../common/pagination/paginated'
+import { getEquipmentFreeQuantity } from '../booking/availability'
 import { Equipment } from './equipment.entity'
 import { CreateEquipmentInput, EquipmentListArgs, UpdateEquipmentInput } from './equipment.inputs'
 import { EquipmentService } from './equipment.service'
-import { EquipmentType, PaginatedEquipment, toEquipmentType } from './equipment.types'
+import { EquipmentType, EquipmentAvailabilityResult, PaginatedEquipment, toEquipmentType } from './equipment.types'
 
 @Resolver(() => EquipmentType)
 export class EquipmentResolver {
@@ -37,5 +40,23 @@ export class EquipmentResolver {
   ): Promise<EquipmentType> {
     const service = new EquipmentService(context.dataSource)
     return toEquipmentType(await service.update(input))
+  }
+
+  @Query(() => EquipmentAvailabilityResult)
+  @Authorized('equipment:read')
+  async equipmentAvailability(
+    @Arg('equipmentId', () => String) equipmentId: string,
+    @Arg('startDate', () => GraphQLISODateTime) startDate: Date,
+    @Arg('endDate', () => GraphQLISODateTime) endDate: Date,
+    @Ctx() context: GraphQLContext,
+  ): Promise<EquipmentAvailabilityResult> {
+    const equipment = await context.dataSource.getRepository(Equipment).findOneOrFail({ where: { id: equipmentId } })
+    const remaining = await getEquipmentFreeQuantity(context.dataSource.manager, equipmentId, startDate, endDate)
+    return {
+      equipmentId: equipment.id,
+      name: equipment.name,
+      quantityAvailable: equipment.quantityAvailable,
+      remainingAvailability: remaining,
+    }
   }
 }

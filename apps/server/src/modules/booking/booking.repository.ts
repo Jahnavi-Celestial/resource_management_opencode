@@ -3,6 +3,7 @@ import type { EntityManager, SelectQueryBuilder } from 'typeorm'
 import { isUuid } from '../../common/db/uuid'
 import { applyPagination, type PaginationArgs } from '../../common/pagination/apply-pagination'
 import type { SortInput } from '../../common/pagination/sort-input'
+import { isRoomAvailable } from '../booking/availability'
 import { Booking } from './booking.entity'
 import { BookingEquipment } from './booking-equipment.entity'
 import { Equipment } from '../equipment/equipment.entity'
@@ -119,6 +120,14 @@ function applyFilter(
   return query
 }
 
+export type BookingSummaryData = {
+  id: string
+  startTime: Date
+  endTime: Date
+  purpose: string
+  status: string
+}
+
 export class BookingRepository {
   async findPage(
     manager: EntityManager,
@@ -147,6 +156,30 @@ export class BookingRepository {
     const query = manager.getRepository(Booking).createQueryBuilder('booking')
     query.where('booking.id = :bookingId', { bookingId })
     return applyReadScope(query, scope).getOne()
+  }
+
+  async findRoomAvailability(
+    manager: EntityManager,
+    roomId: string,
+    startDate: Date,
+    endDate: Date,
+  ): Promise<BookingSummaryData[]> {
+    const available = await isRoomAvailable(manager, roomId, startDate, endDate)
+    if (available) return []
+    const query = manager.getRepository(Booking).createQueryBuilder('booking')
+    query.where('booking.roomId = :roomId', { roomId })
+    query.andWhere('booking.status IN (:...statuses)', { statuses: ['PENDING', 'APPROVED'] })
+    query.andWhere('booking.start_time < :endDate', { endDate })
+    query.andWhere('booking.end_time > :startDate', { startDate })
+    query.orderBy('booking.start_time', 'ASC')
+    const rows = await query.getMany()
+    return rows.map((b) => ({
+      id: b.id,
+      startTime: b.startTime,
+      endTime: b.endTime,
+      purpose: b.purpose,
+      status: b.status,
+    }))
   }
 
   async lockResources(

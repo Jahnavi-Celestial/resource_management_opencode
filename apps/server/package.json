@@ -17,6 +17,7 @@
     "test:loaders": "tsx scripts/test-loaders.ts",
     "test:booking-list": "tsx src/modules/booking/__tests__/booking-list.acceptance.ts",
     "test:booking-create": "tsx src/modules/booking/__tests__/booking-create.acceptance.ts",
+    "test:booking-availability": "tsx src/modules/booking/__tests__/booking-availability.acceptance.ts",
     "test:booking-detail": "tsx src/modules/booking/__tests__/booking-detail.acceptance.ts",
     "test:s4": "tsx scripts/acceptance-s4.ts",
     "test:s5": "tsx scripts/acceptance-s5.ts",

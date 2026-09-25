@@ -1,11 +1,13 @@
 import { Arg, Args, Authorized, Ctx, FieldResolver, Mutation, Query, Resolver, Root } from 'type-graphql'
 import { AuthorisationError } from '../../common/errors/authorisation-error'
+import type { DataSource } from 'typeorm'
 import type { GraphQLContext } from '../../common/graphql/context'
 import type { Paginated } from '../../common/pagination/paginated'
+import { Booking } from '../booking/booking.entity'
 import { RoleType, toRoleType } from '../rbac/rbac.types'
 import { CreateEmployeeInput, EmployeeListArgs, UpdateEmployeeInput } from './employee.inputs'
 import { EmployeeService } from './employee.service'
-import { EmployeeType, PaginatedEmployees, toEmployeeType } from './employee.types'
+import { EmployeeType, EmployeeBookingSummary, PaginatedEmployees, toEmployeeType } from './employee.types'
 
 @Resolver(() => EmployeeType)
 export class EmployeeResolver {
@@ -34,6 +36,23 @@ export class EmployeeResolver {
   async roles(@Root() employee: EmployeeType, @Ctx() context: GraphQLContext): Promise<RoleType[]> {
     const roles = await context.loaders.employeeRoles.load(employee.id)
     return roles.map(toRoleType)
+  }
+
+  @FieldResolver(() => [EmployeeBookingSummary])
+  async bookingHistory(@Root() employee: EmployeeType, @Ctx() context: GraphQLContext): Promise<EmployeeBookingSummary[]> {
+    if (employee.id === null) return []
+    const repository = context.dataSource.getRepository(Booking)
+    const bookings = await repository.find({
+      where: { employeeId: employee.id },
+      order: { createdAt: 'DESC' },
+    })
+    return bookings.map((b) => ({
+      id: b.id,
+      startTime: b.startTime,
+      endTime: b.endTime,
+      purpose: b.purpose,
+      status: b.status,
+    }))
   }
 
   @Mutation(() => EmployeeType)

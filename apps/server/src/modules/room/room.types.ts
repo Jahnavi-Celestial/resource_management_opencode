@@ -24,6 +24,27 @@ export class RoomType {
 
   @Field(() => Date)
   updatedAt!: Date
+
+  @Field(() => [RoomBookingSummary], { nullable: true })
+  availability!: RoomBookingSummary[] | null
+}
+
+@ObjectType('RoomBookingSummary')
+export class RoomBookingSummary {
+  @Field(() => ID)
+  id!: string
+
+  @Field(() => Date)
+  startTime!: Date
+
+  @Field(() => Date)
+  endTime!: Date
+
+  @Field(() => String)
+  purpose!: string
+
+  @Field(() => String)
+  status!: string
 }
 
 export function toRoomType(room: MeetingRoom): RoomType {
@@ -35,6 +56,7 @@ export function toRoomType(room: MeetingRoom): RoomType {
   type.isActive = room.isActive
   type.createdAt = room.createdAt
   type.updatedAt = room.updatedAt
+  type.availability = []
   return type
 }
 
