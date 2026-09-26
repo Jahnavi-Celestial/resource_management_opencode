@@ -20,6 +20,7 @@ import { EquipmentResolver } from './modules/equipment/equipment.resolver'
 import { AuditResolver } from './modules/audit/audit.resolver'
 import { NotificationResolver } from './modules/notification/notification.resolver'
 import { PermissionResolver } from './modules/rbac/permission.resolver'
+import { ReportResolver } from './modules/report/report.resolver'
 import { RbacResolver } from './modules/rbac/rbac.resolver'
 import { RoleResolver } from './modules/rbac/role.resolver'
 import { RoomResolver } from './modules/room/room.resolver'
@@ -54,6 +55,7 @@ export async function createApp(dataSource: DataSource): Promise<express.Express
       BookingResolver,
       AuditResolver,
       NotificationResolver,
+      ReportResolver,
     ],
     authChecker,
     validate: true,

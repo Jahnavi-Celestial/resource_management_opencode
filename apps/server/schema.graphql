@@ -11,6 +11,10 @@ type Query {
   myNotifications(sort: SortInput, page: Int! = 1, pageSize: Int! = 20, type: NotificationType, unreadOnly: Boolean): PaginatedNotifications!
   unreadCount: Int!
   permissions(pageSize: Int! = 20, page: Int! = 1): PermissionPage!
+  mostBookedRooms(limit: Int, range: ReportRangeInput!): [MostBookedRoom!]!
+  bookingsPerEmployee(limit: Int, range: ReportRangeInput): [EmployeeBookingBreakdown!]!
+  equipmentUsage(limit: Int, statuses: [ReportBookingStatus!], range: ReportRangeInput!): [EquipmentUsage!]!
+  monthlyBookingStatistics(limit: Int, range: ReportRangeInput): [MonthlyBookingStat!]!
   role(id: String!): Role!
   roles(pageSize: Int! = 20, page: Int! = 1): RolePage!
   rooms(page: Int! = 1, pageSize: Int! = 20, search: String, minCapacity: Int, maxCapacity: Int, activeOnly: Boolean! = false, sort: SortInput): PaginatedRoom!
@@ -254,6 +258,56 @@ enum NotificationType {
 type PermissionPage {
   items: [Permission!]!
   total: Int!
+}
+
+type MostBookedRoom {
+  roomId: String!
+  roomName: String!
+  location: String!
+  capacity: Int!
+  bookingCount: Int!
+}
+
+input ReportRangeInput {
+  from: DateTimeISO!
+  to: DateTimeISO!
+}
+
+type EmployeeBookingBreakdown {
+  employeeId: String
+  displayName: String!
+  email: String
+  totalCount: Int!
+  pendingCount: Int!
+  approvedCount: Int!
+  rejectedCount: Int!
+  cancelledCount: Int!
+  completedCount: Int!
+}
+
+type EquipmentUsage {
+  equipmentId: String!
+  equipmentName: String!
+  quantityAvailable: Int!
+  bookingCount: Int!
+  totalQuantityCommitted: Int!
+  totalQuantityHours: Float!
+}
+
+enum ReportBookingStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  COMPLETED
+}
+
+type MonthlyBookingStat {
+  month: String!
+  created: Int!
+  approved: Int!
+  rejected: Int!
+  cancelled: Int!
 }
 
 type RolePage {

@@ -72,8 +72,13 @@ transaction, FR-75's unique index as the race backstop), creating the
 notification *and* the FR-61 outbox row in one transaction and pushing the
 notification over the ws gateway post-commit. Both are plain callables first and
 scheduled jobs second, which is what lets the acceptance suites drive them with
-an injected clock instead of waiting on a timer.
-The client (C0+) is not started yet.
+an injected clock instead of waiting on a timer. S11 (reports, FR-66–70) is
+complete: `modules/report/` holds `report.repository.ts` (four aggregated
+QueryBuilder reads), `report.service.ts` (range/status validation only, no
+transaction — a report mutates nothing), `report.resolver.ts` (four queries,
+every one `@Authorized('report:read')`, no mutation exists) and `report.inputs.ts`/
+`report.types.ts`. `npm run test:reports` (alias `test:s11`) is the single entry
+point. The client (C0+) is not started yet.
 
 ## Commands
 
@@ -134,7 +139,14 @@ npm run test:scheduler       # node-cron registration (also run by test:s10): al
 npm run test:s10       # ALL of S10 in one command: runs the three S10 suites in sequence via
                        # scripts/acceptance-s10.ts — complete-elapsed-bookings (FR-72/73/75), send-reminders
                        # (FR-74/75), and scheduler registration. Reports all three verdicts even if one fails;
-                       # exits non-zero if any failed. The first two need local Postgres, no dev server
+                        # exits non-zero if any failed. The first two need local Postgres, no dev server
+npm run test:reports     # S11 reports (alias test:s11): four report queries against a hand-computed fixture —
+                         # room ranking (FR-66), per-employee per-status breakdown (FR-67), quantity-hours with
+                         # range clipping (FR-68), per-month created/approved/rejected/cancelled (FR-69); the
+                         # suite also captures the SQL TypeORM really sends, asserts GROUP BY + aggregate
+                         # functions are in it, and runs EXPLAIN on that exact statement (FR-70); plus
+                         # report:read gating, read-only-schema and range/status validation
+                         # (needs local Postgres, no dev server)
 npm run dev            # boot server; GraphQL at http://localhost:3000/graphql,
                        # health check at http://localhost:3000/health,
                        # realtime at ws://localhost:3000/ws?token=<jwt>
@@ -235,3 +247,35 @@ Scripts outside `npm run dev`:
   reasoning live in `docs/PLAN.md` assumption #10. The email dispatcher keeps its
   own 1-minute `EMAIL_DISPATCH_CRON` because a queued mail is the one thing here
   a user is actively waiting on.
+- Report semantics are fixed in the module rather than guessed per call, and
+  `test:reports` exists to keep them true. A booking is in scope for a ranged
+  report when its window **overlaps** the half-open `[from, to)` range
+  (`start_time < to AND end_time > from`), and FR-68 **clips** each line's
+  duration to the range with `LEAST`/`GREATEST` so a booking straddling a
+  boundary contributes only its in-range hours — a 2h booking from 02-28 23:00
+  to 03-01 01:00 is 1 quantity-hour, not 2. FR-68's default status filter is
+  PENDING + APPROVED because that is what "committed" already means per FR-35
+  (the same definition `availability.ts` enforces); a REJECTED/CANCELLED/
+  COMPLETED booking commits nothing, so it is excluded unless the caller asks
+  for it. FR-69 buckets "created" on `booking.created_at` and the three outcome
+  counts on `audit_log.created_at`, because FR-40/FR-46 already define a
+  booking's processed date as its audit entry's timestamp (there is no
+  `processed_at` column, §6) — which means a booking created in one month and
+  approved in the next shows up in both months' rows, and the two `UNION ALL`
+  arms have to be merged on the month key (an outer `GROUP BY month` over
+  `SUM()`, still inside one statement) so a month with creations but no
+  decisions returns one row with zeros rather than two rows. `bookingsPerEmployee`
+  groups on the nullable `booking.employee_id`, so a requester whose employee row
+  was hard-deleted (FR-7) reports as one `employeeId: null` row labelled with the
+  same `DELETED_USER_DISPLAY_NAME` constant the loaders use — in SQL, because
+  fetching employees to format names in JS would be the aggregation-in-the-app
+  that FR-70 forbids. Every report takes an optional `limit` clamped to
+  `MAX_PAGE_SIZE` (NFR-2: no resolver returns an unbounded collection), and ranks
+  are made deterministic by a name tie-break because booking counts tie often.
+- `report.repository.ts` writes the FR-69 `UNION ALL` fragment without table
+  aliases on purpose: a raw fragment inlined as a derived table has no metadata
+  in the outer builder, so an `alias.column` reference inside it would be
+  rewritten by property-name replacement. TypeORM only treats a `from(string,
+  alias)` as a derived table when the string starts *and* ends with `(`/`)` —
+  it quotes anything else as an identifier, which is a very confusing error.
+

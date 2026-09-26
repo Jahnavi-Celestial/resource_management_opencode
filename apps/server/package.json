@@ -31,6 +31,8 @@
     "test:send-reminders": "tsx src/jobs/__tests__/send-reminders.acceptance.ts",
     "test:scheduler": "tsx src/jobs/__tests__/scheduler.acceptance.ts",
     "test:s10": "tsx scripts/acceptance-s10.ts",
+    "test:reports": "tsx src/modules/report/__tests__/reports.acceptance.ts",
+    "test:s11": "tsx src/modules/report/__tests__/reports.acceptance.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
