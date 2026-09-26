@@ -58,7 +58,21 @@ FR-61 dispatch can never touch a booking transaction — a send failure only eve
 costs a retry. `npm run test:email` proves provider selection, the post-commit
 enqueue, dispatch via noop, retry-on-throw with the booking still APPROVED,
 exhaustion into FAILED, no-resend idempotency and subject/HTML injection safety.
-Reminders (FR-74/75) are still S10's job to enqueue.
+Reminders (FR-74/75) and the elapsed-booking completion (FR-72/73) are done: S10
+is complete. `src/jobs/complete-elapsed-bookings.job.ts` transitions elapsed
+APPROVED bookings to COMPLETED in one transaction per booking, re-checking status
+and end time under `FOR UPDATE` and writing the audit row with the seeded system
+employee as actor — it never touches availability, because `isRoomAvailable` and
+the equipment cap are *derived* from status and time, so a completed booking frees
+its room and equipment with no release step. `src/jobs/send-reminders.job.ts`
+reminds the requester for bookings starting within
+`REMINDER_LEAD_TIME_MINUTES` (statuses PENDING/APPROVED, SQL `NOT EXISTS`
+pre-filter, `NotificationRepository.hasReminder` re-checked inside the write
+transaction, FR-75's unique index as the race backstop), creating the
+notification *and* the FR-61 outbox row in one transaction and pushing the
+notification over the ws gateway post-commit. Both are plain callables first and
+scheduled jobs second, which is what lets the acceptance suites drive them with
+an injected clock instead of waiting on a timer.
 The client (C0+) is not started yet.
 
 ## Commands
@@ -107,6 +121,20 @@ npm run test:email     # FR-61 outbox (also run by test:s9; kept for focused ite
                       # still APPROVED, exhaustion -> FAILED, no-resend idempotency, injection safety
                       # (owns the outbox through the dispatcher's injected clock, so a running
                       # dev server's cron cannot steal its rows — needs local Postgres)
+npm run test:complete-elapsed-bookings  # FR-72 job alone (also run by test:s10): elapsed APPROVED -> COMPLETED with a
+                                        # system-actor audit row, PENDING/future-end untouched, derived
+                                        # availability flip, repeat runs a no-op (FR-75)
+npm run test:send-reminders   # FR-74/75 job alone (also run by test:s10): lead-time window, PENDING/APPROVED only,
+                             # FR-7 null-requester skip, one REMINDER + one outbox row per booking, repeat runs
+                             # and two concurrent runs produce exactly one of each
+npm run test:scheduler       # node-cron registration (also run by test:s10): all three jobs registrable with valid
+                             # crons, both S10 jobs defaulting to BOOKING_JOBS_CRON, invalid cron/empty/duplicate
+                             # name rejected at registration, a task really fires and stop() really halts it, a
+                             # throwing run never becomes an unhandled rejection (no DB needed)
+npm run test:s10       # ALL of S10 in one command: runs the three S10 suites in sequence via
+                       # scripts/acceptance-s10.ts — complete-elapsed-bookings (FR-72/73/75), send-reminders
+                       # (FR-74/75), and scheduler registration. Reports all three verdicts even if one fails;
+                       # exits non-zero if any failed. The first two need local Postgres, no dev server
 npm run dev            # boot server; GraphQL at http://localhost:3000/graphql,
                        # health check at http://localhost:3000/health,
                        # realtime at ws://localhost:3000/ws?token=<jwt>
@@ -187,3 +215,23 @@ Scripts outside `npm run dev`:
   takes over the `upgrade` event for `/ws` only, so one port serves both GraphQL
   and WebSockets. Bad handshakes are refused with a raw `401`/`404` response
   before the WebSocket is established, so a rejected client never sees `open`.
+- `createScheduler(jobs)` takes a generic `ScheduledJob { name, schedule, run }`,
+  not job-specific types: each job factory carries its own cadence, so `main.ts`
+  just composes the list and logs exactly what got registered. Two things about
+  it are load-bearing, and `npm run test:scheduler` exists to keep them true:
+  `cron.schedule(..., { scheduled: false })` — node-cron *starts* a task at
+  `schedule()` time by default, so without that flag constructing a scheduler
+  would itself be a side effect (a rejected registration would leave a live
+  timer, and a scheduler only built by a test would keep the process alive
+  forever); and a rejected `run()` is caught and logged, because a throwing job
+  must not become an unhandled rejection or kill its own schedule. There is no
+  `noOverlap` and no catch-up run on `start()` — both are safe only because
+  every registered job is concurrency-*safe*, not just idempotent (`FOR UPDATE
+  SKIP LOCKED` in the dispatcher, in-transaction re-checks plus a unique-index
+  backstop in the two booking jobs), so an overlapping or post-restart run finds
+  nothing due instead of duplicating work.
+- `BOOKING_JOBS_CRON` (default `*/5 * * * *`) drives both S10 jobs on one shared
+  cadence — no interval is specified anywhere in the docs, so the choice and its
+  reasoning live in `docs/PLAN.md` assumption #10. The email dispatcher keeps its
+  own 1-minute `EMAIL_DISPATCH_CRON` because a queued mail is the one thing here
+  a user is actively waiting on.

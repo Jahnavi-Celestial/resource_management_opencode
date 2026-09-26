@@ -27,6 +27,10 @@
     "test:s9": "tsx scripts/acceptance-s9.ts",
     "test:realtime": "tsx src/realtime/__tests__/realtime.acceptance.ts",
     "test:email": "tsx src/email/__tests__/email.acceptance.ts",
+    "test:complete-elapsed-bookings": "tsx src/jobs/__tests__/complete-elapsed-bookings.acceptance.ts",
+    "test:send-reminders": "tsx src/jobs/__tests__/send-reminders.acceptance.ts",
+    "test:scheduler": "tsx src/jobs/__tests__/scheduler.acceptance.ts",
+    "test:s10": "tsx scripts/acceptance-s10.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

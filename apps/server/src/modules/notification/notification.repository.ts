@@ -94,4 +94,24 @@ export class NotificationRepository {
     const rows = await qb.getRawMany<{ employeeId: string }>()
     return rows.map((row) => row.employeeId)
   }
+
+  /**
+   * FR-75's idempotency check, in its authoritative form: does a REMINDER
+   * notification already exist for this booking?
+   *
+   * Scoped to the booking only, not to a recipient, because the reminder is
+   * addressed to the booking's single requester — the wording FR-75 uses. Run
+   * this *inside* the write transaction: outside one it is only a hint, and the
+   * S1 unique index on `(booking_id, recipient_id, type)` is what actually makes
+   * two overlapping runs safe.
+   */
+  async hasReminder(manager: EntityManager, bookingId: string): Promise<boolean> {
+    const count = await manager
+      .getRepository(Notification)
+      .createQueryBuilder('notification')
+      .where('notification.booking_id = :bookingId', { bookingId })
+      .andWhere('notification.type = :type', { type: 'REMINDER' })
+      .getCount()
+    return count > 0
+  }
 }

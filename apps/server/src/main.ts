@@ -4,6 +4,8 @@ import { loadEnv } from './config/env'
 import { createDataSource } from './config/data-source'
 import { attachRealtimeGateway, createRealtimeGateway, SERVER_SHUTDOWN_CLOSE_CODE } from './realtime/gateway'
 import { createEmailProvider } from './email/providers'
+import { createCompleteElapsedBookingsJob } from './jobs/complete-elapsed-bookings.job'
+import { createSendRemindersJob } from './jobs/send-reminders.job'
 import { createDispatchOutboundEmailsJob } from './jobs/dispatch-outbound-emails.job'
 import { createScheduler } from './jobs/scheduler'
 
@@ -47,10 +49,26 @@ async function main(): Promise<void> {
     schedule: env.email.dispatchCron,
     maxAttempts: env.email.maxAttempts,
   })
-  const scheduler = createScheduler([emailJob])
+
+  // S10: the two booking-clock jobs, on one shared cadence (BOOKING_JOBS_CRON,
+  // see PLAN.md assumption #10). Both are plain callables first — the acceptance
+  // suites drive them with an injected clock — and registered here last, after
+  // the port is serving and the gateway has claimed '/ws', so the first tick
+  // cannot race the boot.
+  const completeElapsedJob = createCompleteElapsedBookingsJob(dataSource, {
+    schedule: env.bookingJobsCron,
+  })
+  const sendRemindersJob = createSendRemindersJob(dataSource, {
+    schedule: env.bookingJobsCron,
+  })
+
+  const scheduler = createScheduler([emailJob, completeElapsedJob, sendRemindersJob])
   scheduler.start()
+  for (const task of scheduler.tasks) {
+    console.log(`[${env.nodeEnv}] cron job "${task.name}" registered on "${task.schedule}"`)
+  }
   console.log(
-    `[${env.nodeEnv}] email dispatcher on "${env.email.dispatchCron}" via ${emailProvider.name} provider (max ${String(env.email.maxAttempts)} attempts)`,
+    `[${env.nodeEnv}] email dispatcher uses ${emailProvider.name} provider (max ${String(env.email.maxAttempts)} attempts)`,
   )
 
   const shutdown = async (signal: string): Promise<void> => {

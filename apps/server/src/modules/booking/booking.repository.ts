@@ -13,6 +13,9 @@ type BookingResourceLock =
   | { kind: 'room'; id: string }
   | { kind: 'equipment'; id: string }
 
+/** FR-74: only bookings that can still happen are worth a reminder. */
+const REMINDER_STATUSES = ['PENDING', 'APPROVED'] as const
+
 export type InsertBookingData = {
   employeeId: string | null
   roomId: string
@@ -289,5 +292,80 @@ export class BookingRepository {
 
   async findBookingEquipment(manager: EntityManager, bookingId: string): Promise<BookingEquipment[]> {
     return manager.getRepository(BookingEquipment).find({ where: { bookingId } })
+  }
+
+  /**
+   * FR-74/75: the reminder job's candidate set — PENDING/APPROVED bookings that
+   * have not started yet and start within the lead-time window, minus any
+   * booking that already has a REMINDER notification.
+   *
+   * Two deliberate choices:
+   *
+   * - **Status is restricted to PENDING/APPROVED.** A reminder for a booking that
+   *   will never happen is worse than no reminder.
+   * - **The FR-75 `NOT EXISTS` lives here, in SQL.** Checking per booking in the
+   *   job would mean one extra round-trip per candidate on every run, forever,
+   *   for the (overwhelmingly common) already-reminded booking. Pushing it into
+   *   the scan turns the idempotency check into an index lookup. It is a
+   *   *pre-filter*, not the decision: `NotificationRepository.hasReminder` is
+   *   re-checked inside the write transaction, because this query runs outside
+   *   one and two overlapping runs could otherwise both pass it.
+   *
+   * `employee_id IS NOT NULL` is deliberately *not* filtered here — a booking
+   * whose requester was hard-deleted (FR-7) still enters the scan and is counted
+   * as `skippedNoRecipient` by the job, so the FR-7 edge case is visible in the
+   * summary instead of silently shrinking the candidate set.
+   */
+  async findStartingWithinLeadTime(
+    manager: EntityManager,
+    from: Date,
+    to: Date,
+    limit: number,
+  ): Promise<Booking[]> {
+    return manager
+      .getRepository(Booking)
+      .createQueryBuilder('booking')
+      .where('booking.status IN (:...reminderStatuses)', { reminderStatuses: [...REMINDER_STATUSES] })
+      .andWhere('booking.start_time > :from', { from })
+      .andWhere('booking.start_time <= :to', { to })
+      .andWhere(
+        `NOT EXISTS (
+          SELECT 1
+          FROM notification reminder_check
+          WHERE reminder_check.booking_id = booking.id
+            AND reminder_check.type = 'REMINDER'
+        )`,
+      )
+      .orderBy('booking.start_time', 'ASC')
+      .addOrderBy('booking.id', 'ASC')
+      .take(limit)
+      .getMany()
+  }
+
+  /**
+   * FR-72: the FR-72 job's candidate set — APPROVED bookings whose end time has
+   * already elapsed. Ordered by `end_time` (then id, for a stable page) so a
+   * bounded batch always drains the oldest elapsed bookings first and a run that
+   * hits its limit leaves the rest for the next run.
+   *
+   * Deliberately a *pre-filter*, not the decision: the job re-checks status and
+   * end time inside the per-booking transaction while holding `FOR UPDATE`, so a
+   * booking cancelled or completed by someone else in between is never completed
+   * twice.
+   */
+  async findElapsedApproved(
+    manager: EntityManager,
+    now: Date,
+    limit: number,
+  ): Promise<Booking[]> {
+    return manager
+      .getRepository(Booking)
+      .createQueryBuilder('booking')
+      .where('booking.status = :status', { status: 'APPROVED' })
+      .andWhere('booking.end_time < :now', { now })
+      .orderBy('booking.end_time', 'ASC')
+      .addOrderBy('booking.id', 'ASC')
+      .take(limit)
+      .getMany()
   }
 }

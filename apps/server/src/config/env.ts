@@ -44,6 +44,8 @@ export interface Env {
     dispatchCron: string
     maxAttempts: number
   }
+  /** S10 cron cadence, shared by the two booking-clock jobs (see PLAN.md #10). */
+  bookingJobsCron: string
   rejectionReasonMinLength: number
   reminderLeadTimeMinutes: number
   admin: {
@@ -118,6 +120,7 @@ export function loadEnv(): Env {
       dispatchCron: optional('EMAIL_DISPATCH_CRON', '* * * * *'),
       maxAttempts: requiredInt('EMAIL_MAX_ATTEMPTS', 5),
     },
+    bookingJobsCron: optional('BOOKING_JOBS_CRON', '*/5 * * * *'),
     rejectionReasonMinLength: requiredInt('REJECTION_REASON_MIN_LENGTH', 10),
     reminderLeadTimeMinutes: requiredInt('REMINDER_LEAD_TIME_MINUTES', 60),
     admin: {

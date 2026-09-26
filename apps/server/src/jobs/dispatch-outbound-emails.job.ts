@@ -3,11 +3,14 @@ import { dispatchPendingEmails, type DispatchSummary } from '../email/dispatcher
 import type { EmailProvider } from '../email/email.types'
 
 export type OutboundEmailJob = {
+  name: string
   /** Cron expression, from `EMAIL_DISPATCH_CRON`. */
   schedule: string
   maxAttempts: number
   run(): Promise<DispatchSummary>
 }
+
+const JOB_NAME = 'dispatch-outbound-emails'
 
 /**
  * FR-61/FR-90. Runs on a schedule, outside any booking transaction — by the time
@@ -32,5 +35,5 @@ export function createDispatchOutboundEmailsJob(
     }
     return summary
   }
-  return { schedule: options.schedule, maxAttempts: options.maxAttempts, run }
+  return { name: JOB_NAME, schedule: options.schedule, maxAttempts: options.maxAttempts, run }
 }

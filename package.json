@@ -30,6 +30,10 @@
     "test:s9": "npm run test:s9 -w apps/server",
     "test:realtime": "npm run test:realtime -w apps/server",
     "test:email": "npm run test:email -w apps/server",
+    "test:complete-elapsed-bookings": "npm run test:complete-elapsed-bookings -w apps/server",
+    "test:send-reminders": "npm run test:send-reminders -w apps/server",
+    "test:scheduler": "npm run test:scheduler -w apps/server",
+    "test:s10": "npm run test:s10 -w apps/server",
     "typecheck": "npm run typecheck -w packages/shared && npm run typecheck -w apps/server"
   },
   "engines": {
