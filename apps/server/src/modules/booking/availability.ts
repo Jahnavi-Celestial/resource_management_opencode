@@ -18,6 +18,7 @@ export function equipmentAvailabilityKey(window: EquipmentAvailabilityWindow): s
 export async function getEquipmentFreeQuantities(
   manager: EntityManager,
   windows: readonly EquipmentAvailabilityWindow[],
+  excludeBookingId?: string,
 ): Promise<Map<string, number>> {
   const uniqueWindows = new Map<string, EquipmentAvailabilityWindow>()
   for (const window of windows) {
@@ -71,12 +72,15 @@ export async function getEquipmentFreeQuantities(
       `committed${index}`,
     )
   })
-  const aggregate = await aggregateQuery
+  const query = aggregateQuery
     .where(`(${conditions.join(' OR ')})`, parameters)
     .andWhere('booking.status IN (:...activeStatuses)', {
       activeStatuses: [...ACTIVE_BOOKING_STATUSES],
     })
-    .getRawOne<Record<string, string | number>>()
+  if (excludeBookingId !== undefined) {
+    query.andWhere('booking.id != :excludeBookingId', { excludeBookingId })
+  }
+  const aggregate = await query.getRawOne<Record<string, string | number>>()
 
   windowsList.forEach((window, index) => {
     const key = equipmentAvailabilityKey(window)
@@ -90,9 +94,10 @@ export async function getEquipmentFreeQuantity(
   equipmentId: string,
   startTime: Date,
   endTime: Date,
+  excludeBookingId?: string,
 ): Promise<number> {
   const window = { equipmentId, startTime, endTime }
-  const quantities = await getEquipmentFreeQuantities(manager, [window])
+  const quantities = await getEquipmentFreeQuantities(manager, [window], excludeBookingId)
   return quantities.get(equipmentAvailabilityKey(window)) ?? 0
 }
 

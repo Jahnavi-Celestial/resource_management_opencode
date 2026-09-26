@@ -57,6 +57,14 @@ Local PostgreSQL 18 (EDB install) at `/Library/PostgreSQL/18/bin`, port 5432 —
 no Docker/CI per docs/requirements.md §5.4. DB credentials come from `.env`
 (see `.env.example`).
 
+## Runtime notes
+
+Scripts outside `npm run dev`:
+- Always run with: `npx tsx --tsconfig apps/server/tsconfig.json <file>`
+- Plain `npx tsx` fails with TypeORM decorator errors (missing tsconfig)
+- `config/data-source.ts` exports `createDataSource()` (a factory function), not a DataSource instance — call it, don't search exports for an instance
+- dotenv config: import `'<path>/node_modules/dotenv/config.js'` if running a file outside the workspace, plain `'dotenv/config'` if inside it
+
 ## Architecture notes
 
 - Migrations are handwritten and reversible in

@@ -277,4 +277,17 @@ export class BookingRepository {
       ),
     )
   }
+
+  async findPendingOrdered(manager: EntityManager, pagination: PaginationArgs, sort: SortInput | null | undefined): Promise<BookingPage> {
+    const query = manager.getRepository(Booking).createQueryBuilder('booking')
+    query.where('booking.status = :status', { status: 'PENDING' })
+    applyPagination(query, pagination, sort, BOOKING_SORTABLE_FIELDS)
+    query.addOrderBy('booking.id', 'ASC')
+    const [items, totalCount] = await query.getManyAndCount()
+    return { items, totalCount }
+  }
+
+  async findBookingEquipment(manager: EntityManager, bookingId: string): Promise<BookingEquipment[]> {
+    return manager.getRepository(BookingEquipment).find({ where: { bookingId } })
+  }
 }

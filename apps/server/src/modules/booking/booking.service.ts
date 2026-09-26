@@ -4,9 +4,11 @@ import type { AuditAction } from '../audit/audit-log.entity'
 import { DomainError } from '../../common/errors/domain-error'
 import { ConflictError } from '../../common/errors/conflict-error'
 import { NotFoundError } from '../../common/errors/not-found-error'
+import { InputValidationError } from '../../common/errors/field-errors'
 import { runInTransaction } from '../../common/db/transaction'
 import { isRoomAvailable, getEquipmentFreeQuantity } from './availability'
 import { Booking } from './booking.entity'
+import { BookingEquipment } from './booking-equipment.entity'
 import { validateCreateBookingInput, type CreateBookingInput } from './booking.inputs'
 import {
   BookingRepository,
@@ -16,6 +18,7 @@ import {
 } from './booking.repository'
 import type { PaginationArgs } from '../../common/pagination/apply-pagination'
 import type { SortInput } from '../../common/pagination/sort-input'
+import { loadEnv } from '../../config/env'
 
 export class BookingService {
   constructor(
@@ -173,6 +176,100 @@ export class BookingService {
       })
 
       return cancelledBooking
+    })
+  }
+
+  async pendingQueue(pagination: PaginationArgs, sort: SortInput | null | undefined): Promise<BookingPage> {
+    return this.repository.findPendingOrdered(this.dataSource.manager, pagination, sort)
+  }
+
+  async approveBooking(managerId: string, bookingId: string): Promise<Booking> {
+    if (typeof managerId !== 'string' || managerId.length === 0) {
+      throw new DomainError('A manager is required')
+    }
+    if (typeof bookingId !== 'string' || bookingId.length === 0) {
+      throw new DomainError('A booking is required')
+    }
+
+    return runInTransaction(this.dataSource, async (manager) => {
+      const booking = await this.repository.findForUpdate(manager, bookingId)
+      if (booking === null) {
+        throw new NotFoundError('The booking was not found')
+      }
+
+      if (booking.status !== 'PENDING') {
+        throw new DomainError(`Cannot approve booking from status: ${booking.status}`)
+      }
+
+      const room = await this.repository.findRoom(manager, booking.roomId)
+      if (room === null) {
+        throw new NotFoundError('The booking room was not found')
+      }
+      if (!room.isActive) {
+        throw new ConflictError('The selected room is inactive')
+      }
+      if (booking.numberOfAttendees > room.capacity) {
+        throw new ConflictError(
+          `Room capacity exceeded: ${booking.numberOfAttendees} attendees requested for a room with capacity ${room.capacity}`,
+        )
+      }
+      if (!(await isRoomAvailable(manager, room.id, booking.startTime, booking.endTime, booking.id))) {
+        throw new ConflictError('The selected room is not available for the requested time range')
+      }
+
+      const equipmentLines = await this.repository.findBookingEquipment(manager, booking.id)
+      for (const item of equipmentLines) {
+        const freeQuantity = await getEquipmentFreeQuantity(manager, item.equipmentId, booking.startTime, booking.endTime, booking.id)
+        if (item.quantity > freeQuantity) {
+          throw new ConflictError(`Equipment ${item.equipmentId} is not available: requested ${item.quantity}, ${freeQuantity} free`)
+        }
+      }
+
+      const approvedBooking = await this.repository.updateStatus(manager, booking, 'APPROVED')
+      await this.auditService.record(manager, {
+        bookingId: approvedBooking.id,
+        action: 'APPROVE' as AuditAction,
+        oldStatus: 'PENDING',
+        newStatus: 'APPROVED',
+        performedById: managerId,
+      })
+      return approvedBooking
+    })
+  }
+
+  async rejectBooking(managerId: string, bookingId: string, reason: string): Promise<Booking> {
+    if (typeof managerId !== 'string' || managerId.length === 0) {
+      throw new DomainError('A manager is required')
+    }
+    if (typeof bookingId !== 'string' || bookingId.length === 0) {
+      throw new DomainError('A booking is required')
+    }
+
+    const env = loadEnv()
+    if (reason.length < env.rejectionReasonMinLength) {
+      throw new InputValidationError([{ field: 'reason', message: `Rejection reason must be at least ${env.rejectionReasonMinLength} characters` }])
+    }
+
+    return runInTransaction(this.dataSource, async (manager) => {
+      const booking = await this.repository.findForUpdate(manager, bookingId)
+      if (booking === null) {
+        throw new NotFoundError('The booking was not found')
+      }
+
+      if (booking.status !== 'PENDING') {
+        throw new DomainError(`Cannot reject booking from status: ${booking.status}`)
+      }
+
+      booking.rejectionReason = reason
+      const rejectedBooking = await this.repository.updateStatus(manager, booking, 'REJECTED')
+      await this.auditService.record(manager, {
+        bookingId: rejectedBooking.id,
+        action: 'REJECT' as AuditAction,
+        oldStatus: 'PENDING',
+        newStatus: 'REJECTED',
+        performedById: managerId,
+      })
+      return rejectedBooking
     })
   }
 }
