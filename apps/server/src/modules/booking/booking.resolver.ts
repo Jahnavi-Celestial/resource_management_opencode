@@ -18,6 +18,7 @@ import {
   Resolver,
 } from 'type-graphql'
 import { AuthorisationError } from '../../common/errors/authorisation-error'
+import type { ResolvedAuthContext } from '../../auth/resolve-auth-context'
 import type { GraphQLContext } from '../../common/graphql/context'
 import {
   DELETED_USER_DISPLAY_NAME,
@@ -58,6 +59,43 @@ export class RejectBookingInput {
 
   @Field(() => String)
   reason!: string
+}
+
+/**
+ * GraphQL shape of `booking.inputs.ts`'s CreateBookingInput. Kept separate from
+ * the class-validator class so validation stays where it already is: the
+ * service runs `validateCreateBookingInput`, which is the single definition of
+ * what a valid booking request is (FR-31/34/35) and is already covered by the
+ * service-level suite. This class only carries the transport shape.
+ */
+@InputType('CreateBookingEquipmentInput')
+class CreateBookingEquipmentInputType {
+  @Field(() => ID)
+  equipmentId!: string
+
+  @Field(() => Int)
+  quantity!: number
+}
+
+@InputType('CreateBookingInput')
+export class CreateBookingInputType {
+  @Field(() => ID)
+  roomId!: string
+
+  @Field(() => [CreateBookingEquipmentInputType], { nullable: true })
+  equipment?: CreateBookingEquipmentInputType[]
+
+  @Field(() => GraphQLISODateTime)
+  startTime!: Date
+
+  @Field(() => GraphQLISODateTime)
+  endTime!: Date
+
+  @Field(() => String)
+  purpose!: string
+
+  @Field(() => Int)
+  numberOfAttendees!: number
 }
 
 @ObjectType()
@@ -249,11 +287,15 @@ export function readScope(context: GraphQLContext): BookingReadScope {
   return { kind: 'own', employeeId: auth.employee.id }
 }
 
-function authenticatedEmployeeId(context: GraphQLContext): string {
+function requireAuth(context: GraphQLContext): ResolvedAuthContext {
   if (context.auth === null) {
     throw new AuthorisationError()
   }
-  return context.auth.employee.id
+  return context.auth
+}
+
+function authenticatedEmployeeId(context: GraphQLContext): string {
+  return requireAuth(context).employee.id
 }
 
 @Resolver(() => BookingType)
@@ -312,6 +354,59 @@ export class BookingResolver {
   ): Promise<Booking> {
     const service = new BookingService(context.dataSource)
     return service.rejectBooking(authenticatedEmployeeId(context), input.id, input.reason)
+  }
+
+  @Mutation(() => BookingType)
+  @Authorized('booking:create')
+  async createBooking(
+    @Ctx() context: GraphQLContext,
+    @Arg('input', () => CreateBookingInputType) input: CreateBookingInputType,
+  ): Promise<Booking> {
+    const service = new BookingService(context.dataSource)
+    return service.createBooking(authenticatedEmployeeId(context), input)
+  }
+
+  /**
+   * One cancellation mutation, routed on the caller's identity and
+   * permissions (FR-37) rather than exposing two mutations for the client to
+   * choose between — a client picking the wrong one would be a privilege
+   * decision made in the wrong layer.
+   *
+   * `@Authorized()` carries no permission list on purpose: the auth checker
+   * requires *every* listed permission, and which permission applies here
+   * depends on who the requester is, so the check has to happen after the
+   * lookup. The generic `Not authorised` is still all a refusal ever reveals.
+   */
+  @Mutation(() => BookingType)
+  @Authorized()
+  async cancelBooking(
+    @Ctx() context: GraphQLContext,
+    @Arg('id', () => ID) id: string,
+  ): Promise<Booking> {
+    const auth = requireAuth(context)
+    const service = new BookingService(context.dataSource)
+    const canCancelOwn = auth.permissionKeys.has('booking:cancel:own')
+    const canCancelAny = auth.permissionKeys.has('booking:cancel:any')
+
+    // Refuse before the lookup so a caller holding neither cancel permission
+    // cannot learn whether this id exists (FR-3).
+    if (!canCancelOwn && !canCancelAny) {
+      throw new AuthorisationError()
+    }
+
+    const requesterId = await service.requesterIdOf(id)
+
+    if (requesterId === auth.employee.id) {
+      if (!canCancelOwn) {
+        throw new AuthorisationError()
+      }
+      return service.cancelOwnBooking(auth.employee.id, id)
+    }
+
+    if (!canCancelAny) {
+      throw new AuthorisationError()
+    }
+    return service.cancelAnyBooking(auth.employee.id, id)
   }
 
   @FieldResolver()

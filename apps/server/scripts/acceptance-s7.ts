@@ -292,6 +292,16 @@ async function testNfr4Performance(dataSource: DataSource): Promise<void> {
   }
   log(`  seeded ${NFR_BOOKING_COUNT_LARGE} bookings`)
 
+  // The seed is 100k raw INSERTs, so pg_statistic still describes whatever the
+  // table held before this run (usually near-empty, since the suite cleans up
+  // after itself). Left unanalyzed, the planner prices the tiny partial GiST
+  // exclusion index as a full scan at cost 0.25 and never considers the
+  // idx_booking_start_time_end_time path at all — the query still answers in
+  // ~50ms, but from the wrong index, and both the latency figure and the
+  // EXPLAIN below would report on a plan no real deployment would use.
+  await dataSource.query('ANALYZE booking')
+  log('  analyzed booking so the planner sees the seeded cardinality')
+
   const query = `query { bookings(filter: { status: APPROVED, search: "${BOOKING_PREFIX}" }, pageSize: ${PAGE_SIZE_QUERY}, sort: { field: "startTime", direction: "ASC" }) { totalCount items { id purpose status startTime } } }`
 
   const times: number[] = []

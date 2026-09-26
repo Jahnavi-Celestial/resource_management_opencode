@@ -240,6 +240,26 @@ export class BookingRepository {
       .getOne()
   }
 
+  /**
+   * FR-7: `employee_id` is nullable, so `null` is a real answer here (a
+   * hard-deleted requester) and `undefined` is reserved for "no such booking".
+   * Selecting the one column rather than the entity keeps this off the
+   * read-scope path on purpose — it exists to pick a cancel rule, not to serve
+   * a read.
+   */
+  async findRequesterId(manager: EntityManager, bookingId: string): Promise<string | null | undefined> {
+    const row = await manager
+      .getRepository(Booking)
+      .createQueryBuilder('booking')
+      .select('booking.employee_id', 'employeeId')
+      .where('booking.id = :bookingId', { bookingId })
+      .getRawOne<{ employeeId: string | null }>()
+    if (row === null || row === undefined) {
+      return undefined
+    }
+    return row.employeeId ?? null
+  }
+
   async updateStatus(
     manager: EntityManager,
     booking: Booking,

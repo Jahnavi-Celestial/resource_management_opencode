@@ -343,6 +343,8 @@ type Mutation {
   login(input: LoginInput!): String!
   approveBooking(id: ID!): BookingType!
   rejectBooking(input: RejectBookingInput!): BookingType!
+  createBooking(input: CreateBookingInput!): BookingType!
+  cancelBooking(id: ID!): BookingType!
   createEmployee(input: CreateEmployeeInput!): Employee!
   updateEmployee(input: UpdateEmployeeInput!): Employee!
   deleteEmployee(id: String!): Boolean!
@@ -369,6 +371,20 @@ input LoginInput {
 input RejectBookingInput {
   id: ID!
   reason: String!
+}
+
+input CreateBookingInput {
+  roomId: ID!
+  equipment: [CreateBookingEquipmentInput!]
+  startTime: DateTimeISO!
+  endTime: DateTimeISO!
+  purpose: String!
+  numberOfAttendees: Int!
+}
+
+input CreateBookingEquipmentInput {
+  equipmentId: ID!
+  quantity: Int!
 }
 
 input CreateEmployeeInput {

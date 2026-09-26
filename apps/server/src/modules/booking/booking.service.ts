@@ -24,6 +24,26 @@ import type { PaginationArgs } from '../../common/pagination/apply-pagination'
 import type { SortInput } from '../../common/pagination/sort-input'
 import { loadEnv } from '../../config/env'
 
+/**
+ * Which decision, if any, produces a transactional email (FR-61).
+ *
+ * FR-61 names exactly three events: approval, rejection and the upcoming-booking
+ * reminder. A cancellation is not one of them, so it maps to `null` and gets no
+ * mail at all — the requester still gets the in-app `BOOKING_CANCELLED`
+ * notification, which is the whole of what FR-57 requires of a cancellation.
+ *
+ * The mapping is spelled out as an exhaustive `Record` rather than a ternary on
+ * purpose: a `Record<BookingDecisionType, ...>` fails to compile the moment a
+ * fourth decision type is added, so a new decision can never silently inherit
+ * the rejection template and send a requester a "your booking was rejected"
+ * mail for something that was not a rejection.
+ */
+const DECISION_EMAIL_TEMPLATE: Record<BookingDecisionType, EmailTemplate | null> = {
+  BOOKING_APPROVED: 'BOOKING_APPROVED',
+  BOOKING_REJECTED: 'BOOKING_REJECTED',
+  BOOKING_CANCELLED: null,
+}
+
 export class BookingService {
   constructor(
     private readonly dataSource: DataSource,
@@ -108,6 +128,10 @@ export class BookingService {
    * failing must not suppress the other. The row is written inside the
    * post-commit transaction, so it lands only once the booking is durable, and
    * the dispatcher sends it later.
+   *
+   * A decision with no email (a cancellation, per `DECISION_EMAIL_TEMPLATE`)
+   * returns before registering the hook, so no post-commit transaction is even
+   * opened for it.
    */
   private enqueueDecisionEmail(
     tx: TransactionalEntityManager,
@@ -116,13 +140,18 @@ export class BookingService {
     booking: Booking,
     reason?: string,
   ): void {
-    const template: EmailTemplate = type === 'BOOKING_APPROVED' ? 'BOOKING_APPROVED' : 'BOOKING_REJECTED'
+    const template = DECISION_EMAIL_TEMPLATE[type]
+    if (template === null) {
+      return
+    }
     tx.afterCommit(async () => {
       try {
         await runInTransaction(this.dataSource, async (manager) => {
           if (template === 'BOOKING_REJECTED' && reason === undefined) {
             // Rejections always carry a reason (validated at the input layer);
-            // bail out rather than queue a rejection with no explanation.
+            // bail out rather than queue a rejection with no explanation. This
+            // guard is scoped to rejections on purpose — it is not, and must not
+            // become, the mechanism that suppresses cancellation emails.
             return null
           }
           const room = await this.repository.findRoom(manager, booking.roomId)
@@ -235,6 +264,23 @@ export class BookingService {
 
   async cancelAnyBooking(employeeId: string, bookingId: string): Promise<Booking> {
     return this.cancelBooking(employeeId, bookingId, false)
+  }
+
+  /**
+   * FR-37 routing support: who requested this booking, or `null` when the
+   * employee row was hard-deleted (FR-7). Deliberately not read-scope gated —
+   * the caller has already proved it holds a cancel permission by the time
+   * this runs, and the answer only selects which cancel rule applies; it is
+   * never returned to the client. `employee_id` is immutable, so reading it
+   * outside the lock below cannot race: the routed decision is the same one
+   * the transaction re-checks.
+   */
+  async requesterIdOf(bookingId: string): Promise<string | null> {
+    const requesterId = await this.repository.findRequesterId(this.dataSource.manager, bookingId)
+    if (requesterId === undefined) {
+      throw new NotFoundError('The booking was not found')
+    }
+    return requesterId
   }
 
   private async cancelBooking(

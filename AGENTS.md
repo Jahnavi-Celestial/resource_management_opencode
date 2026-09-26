@@ -105,7 +105,9 @@ npm run test:loaders   # NFR-1: concurrent requests get separate DataLoader
                         # boot and non-empty (boots the app — needs local Postgres)
 npm run test:booking-list # booking list acceptance tests
 npm run test:booking-detail # booking detail acceptance tests
-npm run test:booking-create # booking create + concurrency acceptance tests (12 scenarios)
+npm run test:booking-create # booking create + concurrency (service) and the two write
+                              # mutations over GraphQL: createBooking gating + FR-38 UUID,
+                              # cancelBooking own/any routing, refusal cases
 npm run test:booking-availability # S7 availability views (FR-23/29) + employee history (FR-10)
 npm run test:s7                # S7 full acceptance suite: NFR-1 N+1 elimination, NFR-4 100k performance, list/detail/availability
 npm run test:s8                # S8 acceptance suite: one file, service-level FR-50–56 then the GraphQL layer
@@ -218,11 +220,27 @@ Scripts outside `npm run dev`:
   request, and a second instance on a busy port reports
   `failed to start server: listen EADDRINUSE` instead of an unhandled `error`
   event.
-- Booking create/cancel are **service-layer only** — there is no
-  `createBooking`/`cancelBooking` GraphQL mutation in the emitted schema, and no
-  milestone row requires one (S6's concurrency criteria drive the service). C0
-  will need both mutations (with `booking:create`/`booking:cancel:*` gating)
-  before a client can create or cancel anything.
+- `createBooking`/`cancelBooking` are wired as GraphQL mutations (they were
+  service-layer only until the S6 GraphQL layer landed). `createBooking(input:
+  CreateBookingInput!)` is gated by `@Authorized('booking:create')` and delegates
+  straight to `BookingService.createBooking`. `cancelBooking(id: ID!)` is a
+  **single** mutation that routes on the caller's identity and permissions
+  rather than exposing two: it reads `booking.employee_id` via
+  `BookingService.requesterIdOf` and picks `cancelOwnBooking` (needs
+  `booking:cancel:own`) when the caller is the requester, or `cancelAnyBooking`
+  (needs `booking:cancel:any`) when they are not. Two consequences worth
+  knowing: its `@Authorized()` carries **no** permission list, because
+  `authChecker` requires *every* listed permission and which one applies is not
+  known until after the lookup; and a caller who is the requester but holds only
+  `booking:cancel:any` is refused rather than escalated through the any path
+  (least privilege, and it matches FR-56's "no acting on your own booking"
+  spirit — note the seeded Manager role has `:any` but not `:own`). The refusal
+  happens *before* the lookup when the caller holds neither cancel permission,
+  so a stranger cannot probe whether an id exists (FR-3).
+- `booking.createBooking` and `booking.cancelBooking` are the two mutations the
+  S6 GraphQL layer asserts, including the FR-37 asymmetry (the owner may cancel
+  only while PENDING; the any-path also covers APPROVED) and the audit actor
+  attribution for each path.
 - The gateway reuses the HTTP server: `createRealtimeGateway(server, dataSource)`
   takes over the `upgrade` event for `/ws` only, so one port serves both GraphQL
   and WebSockets. Bad handshakes are refused with a raw `401`/`404` response
@@ -242,6 +260,13 @@ Scripts outside `npm run dev`:
   SKIP LOCKED` in the dispatcher, in-transaction re-checks plus a unique-index
   backstop in the two booking jobs), so an overlapping or post-restart run finds
   nothing due instead of duplicating work.
+- The S7 100k perf fixture runs `ANALYZE booking` after its bulk seed, and that
+  is load-bearing, not tidiness: without it `pg_statistic` still describes the
+  near-empty table the previous run's cleanup left behind, the planner prices the
+  tiny partial GiST exclusion index as a full scan at cost 0.25, and the EXPLAIN
+  assertion sees `ex_booking_room_time_range` instead of
+  `idx_booking_start_time_end_time`. The suite then fails on planner state it
+  does not control, so never remove that statement.
 - `BOOKING_JOBS_CRON` (default `*/5 * * * *`) drives both S10 jobs on one shared
   cadence — no interval is specified anywhere in the docs, so the choice and its
   reasoning live in `docs/PLAN.md` assumption #10. The email dispatcher keeps its
