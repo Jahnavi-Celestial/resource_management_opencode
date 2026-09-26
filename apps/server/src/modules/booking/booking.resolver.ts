@@ -11,6 +11,7 @@ import {
   ID,
   InputType,
   Int,
+  Mutation,
   ObjectType,
   Query,
   registerEnumType,
@@ -48,6 +49,15 @@ export class BookingFilterInput {
 
   @Field(() => GraphQLISODateTime, { nullable: true })
   endDate?: Date
+}
+
+@InputType()
+export class RejectBookingInput {
+  @Field(() => ID)
+  id!: string
+
+  @Field(() => String)
+  reason!: string
 }
 
 @ObjectType()
@@ -239,6 +249,13 @@ export function readScope(context: GraphQLContext): BookingReadScope {
   return { kind: 'own', employeeId: auth.employee.id }
 }
 
+function authenticatedEmployeeId(context: GraphQLContext): string {
+  if (context.auth === null) {
+    throw new AuthorisationError()
+  }
+  return context.auth.employee.id
+}
+
 @Resolver(() => BookingType)
 export class BookingResolver {
   @Query(() => PaginatedBookings)
@@ -265,6 +282,36 @@ export class BookingResolver {
       throw new AuthorisationError()
     }
     return booking
+  }
+
+  @Query(() => PaginatedBookings)
+  @Authorized('booking:approve')
+  async pendingQueue(
+    @Ctx() context: GraphQLContext,
+    @Args(() => PageArgs) pagination: PageArgs,
+  ): Promise<Paginated<Booking>> {
+    const service = new BookingService(context.dataSource)
+    return service.pendingQueue(pagination, { field: 'createdAt', direction: 'ASC' })
+  }
+
+  @Mutation(() => BookingType)
+  @Authorized('booking:approve')
+  async approveBooking(
+    @Ctx() context: GraphQLContext,
+    @Arg('id', () => ID) id: string,
+  ): Promise<Booking> {
+    const service = new BookingService(context.dataSource)
+    return service.approveBooking(authenticatedEmployeeId(context), id)
+  }
+
+  @Mutation(() => BookingType)
+  @Authorized('booking:reject')
+  async rejectBooking(
+    @Ctx() context: GraphQLContext,
+    @Arg('input', () => RejectBookingInput) input: RejectBookingInput,
+  ): Promise<Booking> {
+    const service = new BookingService(context.dataSource)
+    return service.rejectBooking(authenticatedEmployeeId(context), input.id, input.reason)
   }
 
   @FieldResolver()

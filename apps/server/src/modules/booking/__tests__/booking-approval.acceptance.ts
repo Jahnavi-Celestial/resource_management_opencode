@@ -1,14 +1,26 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { graphql, type ExecutionResult } from 'graphql'
+import { buildSchema } from 'type-graphql'
+import { authChecker } from '../../../auth/auth-checker'
 import { createDataSource } from '../../../config/data-source'
+import { formatError } from '../../../common/errors/format-error'
 import { InputValidationError } from '../../../common/errors/field-errors'
+import type { GraphQLContext } from '../../../common/graphql/context'
+import { createLoaders } from '../../../loaders'
 import { BookingService } from '../booking.service'
+import { BookingResolver } from '../booking.resolver'
 import { Booking } from '../booking.entity'
 import { BookingEquipment } from '../booking-equipment.entity'
 import { Employee } from '../../employee/employee.entity'
 import { Equipment } from '../../equipment/equipment.entity'
 import { MeetingRoom } from '../../room/room.entity'
 import { loadEnv } from '../../../config/env'
+
+interface GqlError {
+  message: string
+  extensions?: Record<string, unknown>
+}
 
 let offsetCounter = 48
 function nextOffset(): number {
@@ -276,7 +288,276 @@ async function main(): Promise<void> {
     await assertReject('7b approve already-REJECTED', () => service.approveBooking(managerId, toReject6.id), /Cannot approve booking from status: REJECTED/)
     console.log('PASS 7 rejected booking cannot be rejected/approved again')
 
-    console.log('ALL BOOKING APPROVAL ACCEPTANCE TESTS PASSED')
+    // --- SCENARIO 8: A manager cannot decide on a booking they created themselves (FR-56) ---
+    await resetData()
+    const selfManagerId = await createEmployee('Approval', 'SelfManager', 'selfmgr')
+    const selfRoomId = await createRoom(10)
+    const selfBooking = await createPendingBooking(selfManagerId, selfRoomId, 60)
+    const selfRejectionTarget = await createPendingBooking(selfManagerId, selfRoomId, 61)
+    await assertReject('8a self-approval', () => service.approveBooking(selfManagerId, selfBooking.id), /A manager cannot approve or reject their own booking request/)
+    assert.equal(
+      (await dataSource.getRepository(Booking).findOneByOrFail({ id: selfBooking.id })).status,
+      'PENDING',
+      'Refused self-approval must leave the booking PENDING',
+    )
+    assert.equal(
+      (await getAudits(selfBooking.id)).length,
+      0,
+      'Refused self-approval must not write an audit row',
+    )
+    console.log('PASS 8a manager approving own booking refused, stays PENDING, no audit')
+
+    // --- SCENARIO 9: Self-rejection is refused the same way ---
+    await assertReject('9a self-rejection', () => service.rejectBooking(selfManagerId, selfRejectionTarget.id, validReason), /A manager cannot approve or reject their own booking request/)
+    assert.equal(
+      (await dataSource.getRepository(Booking).findOneByOrFail({ id: selfRejectionTarget.id })).status,
+      'PENDING',
+      'Refused self-rejection must leave the booking PENDING',
+    )
+    assert.equal(
+      (await dataSource.getRepository(Booking).findOneByOrFail({ id: selfRejectionTarget.id })).rejectionReason,
+      null,
+      'Refused self-rejection must not persist a reason',
+    )
+    assert.equal(
+      (await getAudits(selfRejectionTarget.id)).length,
+      0,
+      'Refused self-rejection must not write an audit row',
+    )
+    console.log('PASS 9a manager rejecting own booking refused, stays PENDING, no reason, no audit')
+
+    // --- SCENARIO 10: A different manager decides the very same bookings normally ---
+    const approvedByOther = await service.approveBooking(managerId, selfBooking.id)
+    assert.equal(approvedByOther.status, 'APPROVED', 'Another manager must be able to approve the booking')
+    const selfAuditAfterOtherApproval = await getAudits(selfBooking.id)
+    assert.equal(selfAuditAfterOtherApproval.length, 1, 'Exactly one audit row after the other manager approves')
+    assert.equal(selfAuditAfterOtherApproval[0]!.action, 'APPROVE')
+    assert.equal(selfAuditAfterOtherApproval[0]!.performed_by, managerId)
+    console.log(`PASS 10a different manager approves creator's booking: ${selfBooking.id} → APPROVED, audit by other manager`)
+
+    const rejectedByOther = await service.rejectBooking(managerId, selfRejectionTarget.id, validReason)
+    assert.equal(rejectedByOther.status, 'REJECTED', 'Another manager must be able to reject the booking')
+    assert.equal(rejectedByOther.rejectionReason, validReason, 'Reason persisted by the other manager')
+    const selfAuditAfterOtherRejection = await getAudits(selfRejectionTarget.id)
+    assert.equal(selfAuditAfterOtherRejection.length, 1, 'Exactly one audit row after the other manager rejects')
+    assert.equal(selfAuditAfterOtherRejection[0]!.action, 'REJECT')
+    assert.equal(selfAuditAfterOtherRejection[0]!.performed_by, managerId)
+    console.log(`PASS 10b different manager rejects creator's booking: ${selfRejectionTarget.id} → REJECTED, reason + audit correct`)
+
+    // ================= S8 GRAPHQL LAYER: resolver wiring =================
+    const schema = await buildSchema({ resolvers: [BookingResolver], authChecker })
+
+    const PENDING_QUEUE_QUERY = `
+      query PendingQueue($page: Int!, $pageSize: Int!) {
+        pendingQueue(page: $page, pageSize: $pageSize) {
+          totalCount
+          items { id status createdAt }
+        }
+      }
+    `
+    const APPROVE_MUTATION = `
+      mutation ApproveBooking($id: ID!) {
+        approveBooking(id: $id) { id status processedAt }
+      }
+    `
+    const REJECT_MUTATION = `
+      mutation RejectBooking($input: RejectBookingInput!) {
+        rejectBooking(input: $input) { id status rejectionReason }
+      }
+    `
+
+    function firstError(result: ExecutionResult): GqlError {
+      assert.ok(result.errors !== undefined && result.errors.length > 0, 'Expected a GraphQL error')
+      const error = result.errors[0]!
+      return formatError(error.toJSON(), error) as GqlError
+    }
+
+    function errorCode(result: ExecutionResult): string | undefined {
+      return firstError(result).extensions?.code as string | undefined
+    }
+
+    async function gql(
+      source: string,
+      variableValues: Record<string, unknown>,
+      contextValue: GraphQLContext,
+    ): Promise<ExecutionResult> {
+      return graphql({ schema, source, variableValues, contextValue })
+    }
+
+    function contextFor(employee: Employee, permissions: string[]): GraphQLContext {
+      return {
+        dataSource,
+        auth: { employee, permissionKeys: new Set<string>(permissions) },
+        loaders: createLoaders(dataSource),
+      } as unknown as GraphQLContext
+    }
+
+    async function loadEmployee(id: string): Promise<Employee> {
+      return dataSource.getRepository(Employee).findOneByOrFail({ id })
+    }
+
+    // --- SCENARIO 11: pendingQueue is gated by booking:approve (FR-50) ---
+    await resetData()
+    const gqlManagerId = await createEmployee('Approval', 'Gqlmanager', 'gqlmgr')
+    const gqlPeerId = await createEmployee('Approval', 'Gqlpeer', 'gqlpeer')
+    const requesterId = await createEmployee('Approval', 'Requester', 'gqlreq')
+    const gqlRoomId = await createRoom(10)
+    const gqlManager = await loadEmployee(gqlManagerId)
+    const requester = await loadEmployee(requesterId)
+
+    const bothPermissions = contextFor(gqlManager, ['booking:approve', 'booking:reject'])
+    const readOnly = contextFor(requester, ['booking:read:own', 'booking:create'])
+    const approveOnly = contextFor(gqlManager, ['booking:approve'])
+    const rejectOnly = contextFor(gqlManager, ['booking:reject'])
+    const anonymous = { dataSource, auth: null, loaders: createLoaders(dataSource) } as unknown as GraphQLContext
+
+    const queueAnonymous = await gql(PENDING_QUEUE_QUERY, { page: 1, pageSize: 10 }, anonymous)
+    assert.equal(errorCode(queueAnonymous), 'FORBIDDEN', 'Unauthenticated pendingQueue must be FORBIDDEN')
+    assert.equal(firstError(queueAnonymous).message, 'Not authorised')
+    console.log(`PASS 11a pendingQueue without a token → ${errorCode(queueAnonymous)} "${firstError(queueAnonymous).message}"`)
+
+    const queueWrongPermission = await gql(PENDING_QUEUE_QUERY, { page: 1, pageSize: 10 }, readOnly)
+    assert.equal(errorCode(queueWrongPermission), 'FORBIDDEN', 'pendingQueue without booking:approve must be FORBIDDEN')
+    assert.equal(
+      firstError(queueWrongPermission).message,
+      'Not authorised',
+      'Authz failure must stay generic and must not name the missing permission',
+    )
+    console.log(`PASS 11b pendingQueue as employee lacking booking:approve → ${errorCode(queueWrongPermission)} "${firstError(queueWrongPermission).message}"`)
+
+    // --- SCENARIO 12: no caller-supplied sort argument; order forced to createdAt ASC ---
+    const sortAttempt = await graphql({
+      schema,
+      source: 'query { pendingQueue(page: 1, pageSize: 10, sort: { field: "createdAt", direction: DESC }) { totalCount } }',
+      contextValue: bothPermissions,
+    })
+    assert.ok(
+      (sortAttempt.errors ?? []).some((error) => /sort/.test(error.message)),
+      `pendingQueue must reject a caller-supplied sort argument, got: ${JSON.stringify(sortAttempt.errors?.map((e) => e.message))}`,
+    )
+    console.log(`PASS 12a pendingQueue exposes no sort argument: "${sortAttempt.errors?.[0]?.message ?? ''}"`)
+
+    const firstQueued = await createPendingBooking(requesterId, gqlRoomId, 70)
+    const secondQueued = await createPendingBooking(requesterId, gqlRoomId, 71)
+    const gqlQueue = await gql(PENDING_QUEUE_QUERY, { page: 1, pageSize: 10 }, bothPermissions)
+    assert.equal(gqlQueue.errors, undefined, `pendingQueue failed: ${JSON.stringify(gqlQueue.errors?.map((e) => e.message))}`)
+    const queueData = gqlQueue.data as { pendingQueue: { totalCount: number; items: Array<{ id: string; createdAt: string }> } }
+    assert.equal(queueData.pendingQueue.totalCount, 2, 'Queue must contain both PENDING fixture bookings')
+    assert.deepEqual(
+      queueData.pendingQueue.items.map((item) => item.id),
+      [firstQueued.id, secondQueued.id],
+      'Queue must be ordered by createdAt ASC',
+    )
+    console.log(`PASS 12b pendingQueue returns ${queueData.pendingQueue.totalCount} items ordered createdAt ASC: ${firstQueued.id} → ${secondQueued.id}`)
+
+    // --- SCENARIO 13: approveBooking is gated by booking:approve (FR-51) ---
+    const approveAnonymous = await gql(APPROVE_MUTATION, { id: firstQueued.id }, anonymous)
+    assert.equal(errorCode(approveAnonymous), 'FORBIDDEN', 'Unauthenticated approveBooking must be FORBIDDEN')
+    console.log(`PASS 13a approveBooking without a token → ${errorCode(approveAnonymous)}`)
+
+    const approveWrongPermission = await gql(APPROVE_MUTATION, { id: firstQueued.id }, readOnly)
+    assert.equal(errorCode(approveWrongPermission), 'FORBIDDEN', 'approveBooking without booking:approve must be FORBIDDEN')
+    assert.equal(firstError(approveWrongPermission).message, 'Not authorised')
+    assert.equal(
+      (await dataSource.getRepository(Booking).findOneByOrFail({ id: firstQueued.id })).status,
+      'PENDING',
+      'Forbidden approve must not change status',
+    )
+    console.log(`PASS 13b approveBooking as employee lacking booking:approve → ${errorCode(approveWrongPermission)} "${firstError(approveWrongPermission).message}", booking stays PENDING`)
+
+    const approveOk = await gql(APPROVE_MUTATION, { id: firstQueued.id }, bothPermissions)
+    assert.equal(approveOk.errors, undefined, `approveBooking failed: ${JSON.stringify(approveOk.errors?.map((e) => e.message))}`)
+    const approveData = approveOk.data as { approveBooking: { id: string; status: string; processedAt: string | null } }
+    assert.equal(approveData.approveBooking.status, 'APPROVED')
+    assert.equal(approveData.approveBooking.id, firstQueued.id)
+    assert.notEqual(approveData.approveBooking.processedAt, null, 'processedAt must resolve from the APPROVE audit row')
+    const approveAuditsGql = await getAudits(firstQueued.id)
+    assert.equal(approveAuditsGql.length, 1, 'Exactly one audit row after GraphQL approval')
+    assert.equal(approveAuditsGql[0]!.action, 'APPROVE')
+    assert.equal(approveAuditsGql[0]!.performed_by, gqlManagerId, 'Audit must be attributed to the authenticated manager')
+    console.log(`PASS 13c approveBooking → ${approveData.approveBooking.id} ${approveData.approveBooking.status}, processedAt ${approveData.approveBooking.processedAt}, audit by authenticated manager`)
+
+    // --- SCENARIO 14: rejectBooking is gated by booking:reject, separately from approve (FR-54) ---
+    const rejectTarget = await createPendingBooking(requesterId, gqlRoomId, 72)
+
+    const rejectAnonymous = await gql(REJECT_MUTATION, { input: { id: rejectTarget.id, reason: 'Legitimate reason here' } }, anonymous)
+    assert.equal(errorCode(rejectAnonymous), 'FORBIDDEN', 'Unauthenticated rejectBooking must be FORBIDDEN')
+    console.log(`PASS 14a rejectBooking without a token → ${errorCode(rejectAnonymous)}`)
+
+    const rejectWithApproveOnly = await gql(REJECT_MUTATION, { input: { id: rejectTarget.id, reason: 'Legitimate reason here' } }, approveOnly)
+    assert.equal(errorCode(rejectWithApproveOnly), 'FORBIDDEN', 'booking:approve alone must not permit rejection')
+    console.log(`PASS 14b rejectBooking with booking:approve only → ${errorCode(rejectWithApproveOnly)} (permissions are not interchangeable)`)
+
+    const approveWithRejectOnly = await gql(APPROVE_MUTATION, { id: rejectTarget.id }, rejectOnly)
+    assert.equal(errorCode(approveWithRejectOnly), 'FORBIDDEN', 'booking:reject alone must not permit approval')
+    assert.equal(
+      (await dataSource.getRepository(Booking).findOneByOrFail({ id: rejectTarget.id })).status,
+      'PENDING',
+      'Forbidden reject must not change status',
+    )
+    console.log(`PASS 14c approveBooking with booking:reject only → ${errorCode(approveWithRejectOnly)} (permissions are not interchangeable), booking stays PENDING`)
+
+    const rejectOk = await gql(REJECT_MUTATION, { input: { id: rejectTarget.id, reason: 'Room is reserved for the all-hands' } }, bothPermissions)
+    assert.equal(rejectOk.errors, undefined, `rejectBooking failed: ${JSON.stringify(rejectOk.errors?.map((e) => e.message))}`)
+    const rejectData = rejectOk.data as { rejectBooking: { id: string; status: string; rejectionReason: string | null } }
+    assert.equal(rejectData.rejectBooking.status, 'REJECTED')
+    assert.equal(rejectData.rejectBooking.rejectionReason, 'Room is reserved for the all-hands')
+    console.log(`PASS 14d rejectBooking → ${rejectData.rejectBooking.id} ${rejectData.rejectBooking.status}, reason "${rejectData.rejectBooking.rejectionReason}"`)
+
+    // --- SCENARIO 15: short reason surfaces as a field error over GraphQL (FR-54) ---
+    const shortReasonTarget = await createPendingBooking(requesterId, gqlRoomId, 73)
+    const gqlShortReason = await gql(REJECT_MUTATION, { input: { id: shortReasonTarget.id, reason: 'no' } }, bothPermissions)
+    assert.equal(errorCode(gqlShortReason), 'BAD_USER_INPUT', 'Short rejection reason must be BAD_USER_INPUT')
+    const reasonFieldErrors = firstError(gqlShortReason).extensions?.fieldErrors as Array<{ field: string }> | undefined
+    assert.ok(
+      reasonFieldErrors?.some((fieldError) => fieldError.field === 'reason'),
+      `Expected a field error for reason, got: ${JSON.stringify(firstError(gqlShortReason).extensions)}`,
+    )
+    assert.equal(
+      (await dataSource.getRepository(Booking).findOneByOrFail({ id: shortReasonTarget.id })).status,
+      'PENDING',
+      'Refused short-reason reject must leave the booking PENDING',
+    )
+    console.log(`PASS 15 rejectBooking with short reason → ${errorCode(gqlShortReason)} fieldErrors=${JSON.stringify(reasonFieldErrors)}`)
+
+    // --- SCENARIO 16: a decided booking cannot be decided again over GraphQL (FR-55) ---
+    const reApprove = await gql(APPROVE_MUTATION, { id: firstQueued.id }, bothPermissions)
+    assert.equal(errorCode(reApprove), 'BAD_USER_INPUT', 'Re-approving an APPROVED booking must be BAD_USER_INPUT')
+    assert.match(firstError(reApprove).message, /Cannot approve booking from status: APPROVED/)
+    console.log(`PASS 16a re-approve APPROVED booking → ${errorCode(reApprove)} "${firstError(reApprove).message}"`)
+
+    const reReject = await gql(REJECT_MUTATION, { input: { id: rejectTarget.id, reason: 'Trying to reverse the decision' } }, bothPermissions)
+    assert.equal(errorCode(reReject), 'BAD_USER_INPUT', 'Re-rejecting a REJECTED booking must be BAD_USER_INPUT')
+    assert.match(firstError(reReject).message, /Cannot reject booking from status: REJECTED/)
+    console.log(`PASS 16b re-reject REJECTED booking → ${errorCode(reReject)} "${firstError(reReject).message}"`)
+
+    // --- SCENARIO 17: FR-56 holds through GraphQL, keyed on the authenticated employee ---
+    const gqlSelfManagerId = await createEmployee('Approval', 'Gqlself', 'gqlself')
+    const selfContext = contextFor(await loadEmployee(gqlSelfManagerId), ['booking:approve', 'booking:reject'])
+    const gqlSelfBooking = await createPendingBooking(gqlSelfManagerId, gqlRoomId, 74)
+
+    const selfApprove = await gql(APPROVE_MUTATION, { id: gqlSelfBooking.id }, selfContext)
+    assert.equal(errorCode(selfApprove), 'BAD_USER_INPUT', 'Self-approval must be refused')
+    assert.match(firstError(selfApprove).message, /A manager cannot approve or reject their own booking request/)
+    console.log(`PASS 17a self-approval over GraphQL → ${errorCode(selfApprove)} "${firstError(selfApprove).message}"`)
+
+    const selfReject = await gql(REJECT_MUTATION, { input: { id: gqlSelfBooking.id, reason: 'Deciding on my own request' } }, selfContext)
+    assert.equal(errorCode(selfReject), 'BAD_USER_INPUT', 'Self-rejection must be refused')
+    assert.match(firstError(selfReject).message, /A manager cannot approve or reject their own booking request/)
+    const selfAfter = await dataSource.getRepository(Booking).findOneByOrFail({ id: gqlSelfBooking.id })
+    assert.equal(selfAfter.status, 'PENDING', 'Refused self-decision must leave the booking PENDING')
+    assert.equal(selfAfter.rejectionReason, null, 'Refused self-rejection must not persist a reason')
+    console.log('PASS 17b self-rejection over GraphQL refused, booking stays PENDING with no reason')
+
+    const peerContext = contextFor(await loadEmployee(gqlPeerId), ['booking:approve', 'booking:reject'])
+    const peerDecision = await gql(APPROVE_MUTATION, { id: gqlSelfBooking.id }, peerContext)
+    assert.equal(peerDecision.errors, undefined, `Peer approve failed: ${JSON.stringify(peerDecision.errors?.map((e) => e.message))}`)
+    const peerData = peerDecision.data as { approveBooking: { id: string; status: string } }
+    assert.equal(peerData.approveBooking.status, 'APPROVED', 'A different manager must be able to decide the same booking')
+    assert.equal((await getAudits(gqlSelfBooking.id))[0]!.performed_by, gqlPeerId, 'Audit must be attributed to the deciding manager')
+    console.log(`PASS 17c different manager approves the creator's booking over GraphQL → ${peerData.approveBooking.id} ${peerData.approveBooking.status}`)
+
+    console.log('ALL S8 ACCEPTANCE TESTS PASSED')
   } finally {
     await cleanup(true)
     if (dataSource.isInitialized) {

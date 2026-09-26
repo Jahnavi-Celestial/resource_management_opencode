@@ -19,7 +19,9 @@ request via `createGraphQLContext`) and schema emission
 `npm run test:loaders` proves per-request isolation and no cross-request
 cache leakage. S4 (employee/room/equipment CRUD), S5 (audit), S6 (booking
 create/cancel with concurrency), S7 (list/detail/availability reads, FR-10,
-FR-23, FR-29) are all complete and their acceptance suites pass.
+FR-23, FR-29) and S8 (manager pending queue + approve/reject with in-transaction
+re-validation and the FR-56 self-decision refusal, FR-50–56) are all complete and
+their acceptance suites pass.
 The client (C0+) is not started yet.
 
 ## Commands
@@ -50,6 +52,8 @@ npm run test:booking-detail # booking detail acceptance tests
 npm run test:booking-create # booking create + concurrency acceptance tests (12 scenarios)
 npm run test:booking-availability # S7 availability views (FR-23/29) + employee history (FR-10)
 npm run test:s7                # S7 full acceptance suite: NFR-1 N+1 elimination, NFR-4 100k performance, list/detail/availability
+npm run test:s8                # S8 acceptance suite: one file, service-level FR-50–56 then the GraphQL layer
+                               # (booking:approve/booking:reject gating, forced createdAt ASC sort, FR-56)
 npm run dev            # boot server; GraphQL at http://localhost:3000/graphql,
                        # health check at http://localhost:3000/health
 

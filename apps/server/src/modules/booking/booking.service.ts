@@ -197,6 +197,10 @@ export class BookingService {
         throw new NotFoundError('The booking was not found')
       }
 
+      if (booking.employeeId === managerId) {
+        throw new DomainError('A manager cannot approve or reject their own booking request')
+      }
+
       if (booking.status !== 'PENDING') {
         throw new DomainError(`Cannot approve booking from status: ${booking.status}`)
       }
@@ -254,6 +258,10 @@ export class BookingService {
       const booking = await this.repository.findForUpdate(manager, bookingId)
       if (booking === null) {
         throw new NotFoundError('The booking was not found')
+      }
+
+      if (booking.employeeId === managerId) {
+        throw new DomainError('A manager cannot approve or reject their own booking request')
       }
 
       if (booking.status !== 'PENDING') {

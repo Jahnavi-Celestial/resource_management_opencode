@@ -25,6 +25,7 @@
     "test:booking-create": "npm run test:booking-create -w apps/server",
     "test:booking-availability": "npm run test:booking-availability -w apps/server",
     "test:booking-approval": "npm run test:booking-approval -w apps/server",
+    "test:s8": "npm run test:s8 -w apps/server",
     "test:booking-detail": "npm run test:booking-detail -w apps/server",
     "typecheck": "npm run typecheck -w packages/shared && npm run typecheck -w apps/server"
   },

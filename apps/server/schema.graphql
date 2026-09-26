@@ -2,6 +2,7 @@ type Query {
   me: MeType!
   bookings(filter: BookingFilterInput, sort: SortInput, page: Int! = 1, pageSize: Int! = 20): PaginatedBookings!
   booking(id: ID!): BookingType!
+  pendingQueue(page: Int! = 1, pageSize: Int! = 20): PaginatedBookings!
   employees(page: Int! = 1, pageSize: Int! = 20, search: String, sort: SortInput): PaginatedEmployee!
   employee(id: String!): Employee!
   equipment(page: Int! = 1, pageSize: Int! = 20, search: String, activeOnly: Boolean! = false, sort: SortInput): PaginatedEquipment!
@@ -260,6 +261,8 @@ type RoomBookingSummary {
 
 type Mutation {
   login(input: LoginInput!): String!
+  approveBooking(id: ID!): BookingType!
+  rejectBooking(input: RejectBookingInput!): BookingType!
   createEmployee(input: CreateEmployeeInput!): Employee!
   updateEmployee(input: UpdateEmployeeInput!): Employee!
   deleteEmployee(id: String!): Boolean!
@@ -279,6 +282,11 @@ type Mutation {
 input LoginInput {
   email: String!
   password: String!
+}
+
+input RejectBookingInput {
+  id: ID!
+  reason: String!
 }
 
 input CreateEmployeeInput {
