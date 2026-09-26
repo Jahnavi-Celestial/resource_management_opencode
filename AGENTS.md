@@ -49,6 +49,7 @@ npm run test:booking-list # booking list acceptance tests
 npm run test:booking-detail # booking detail acceptance tests
 npm run test:booking-create # booking create + concurrency acceptance tests (12 scenarios)
 npm run test:booking-availability # S7 availability views (FR-23/29) + employee history (FR-10)
+npm run test:s7                # S7 full acceptance suite: NFR-1 N+1 elimination, NFR-4 100k performance, list/detail/availability
 npm run dev            # boot server; GraphQL at http://localhost:3000/graphql,
                        # health check at http://localhost:3000/health
 

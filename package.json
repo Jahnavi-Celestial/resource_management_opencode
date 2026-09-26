@@ -19,6 +19,7 @@
     "test:transaction": "npm run test:transaction -w apps/server",
     "test:loaders": "npm run test:loaders -w apps/server",
     "test:s4": "npm run test:s4 -w apps/server",
+    "test:s7": "npm run test:s7 -w apps/server",
     "test:s5": "npm run test:s5 -w apps/server",
     "test:booking-list": "npm run test:booking-list -w apps/server",
     "test:booking-create": "npm run test:booking-create -w apps/server",
