@@ -3,6 +3,9 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import type { Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { createApp } from '../src/app'
 import { createDataSource } from '../src/config/data-source'
 import { runInTransaction } from '../src/common/db/transaction'
 import { AuditService, type AuditRecordInput } from '../src/modules/audit/audit.service'
@@ -49,7 +52,12 @@ interface FixtureConnectionOptions {
   password: string
 }
 
-const GRAPHQL_URL = process.env.GRAPHQL_URL ?? 'http://localhost:3000/graphql'
+// Set GRAPHQL_URL to point the suite at an already-running server. Left unset,
+// it boots its own server on an ephemeral port: depending on whatever happens to
+// be listening on :3000 means this suite can fail (or, worse, pass) for reasons
+// that have nothing to do with the code it is testing.
+const EXTERNAL_GRAPHQL_URL = process.env.GRAPHQL_URL
+let graphQlUrl = EXTERNAL_GRAPHQL_URL ?? ''
 const PSQL = '/Library/PostgreSQL/18/bin/psql'
 const schemaPath = join(__dirname, '..', 'schema.graphql')
 
@@ -89,7 +97,7 @@ async function graphql<T>(
   variables: Record<string, unknown>,
   token?: string,
 ): Promise<T> {
-  const response = await fetch(GRAPHQL_URL, {
+  const response = await fetch(graphQlUrl, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -113,7 +121,7 @@ async function rawGraphql<T>(
 ): Promise<T> {
   console.log(`\n${label}`)
   console.log(`request: ${query} variables=${JSON.stringify(variables)}`)
-  const response = await fetch(GRAPHQL_URL, {
+  const response = await fetch(graphQlUrl, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -214,6 +222,19 @@ async function cleanup(
 async function main(): Promise<void> {
   const dataSource = await createDataSource()
   await dataSource.initialize()
+  let ownedServer: Server | undefined
+  if (EXTERNAL_GRAPHQL_URL === undefined) {
+    const app = await createApp(dataSource)
+    ownedServer = await new Promise<Server>((resolve) => {
+      const listener = app.listen(0, () => {
+        resolve(listener)
+      })
+    })
+    const address = ownedServer.address() as AddressInfo
+    graphQlUrl = `http://127.0.0.1:${String(address.port)}/graphql`
+  } else {
+    graphQlUrl = EXTERNAL_GRAPHQL_URL
+  }
   const service = new AuditService()
   let employeeId: string | undefined
   let roomId: string | undefined
@@ -231,7 +252,7 @@ async function main(): Promise<void> {
       { input: { email: adminEmail, password: adminPassword } },
     )
     const token = login.login
-    console.log(`S5 acceptance — server ${GRAPHQL_URL}, db ${String((dataSource.options as unknown as FixtureConnectionOptions).database)}`)
+    console.log(`S5 acceptance — server ${graphQlUrl}, db ${String((dataSource.options as unknown as FixtureConnectionOptions).database)}`)
 
     const employee = await graphql<{ createEmployee: { id: string } }>(
       'mutation CreateEmployee($input: CreateEmployeeInput!) { createEmployee(input: $input) { id } }',
@@ -404,6 +425,13 @@ async function main(): Promise<void> {
       if (runError === undefined) {
         runError = error
       }
+    }
+    if (ownedServer !== undefined) {
+      await new Promise<void>((resolve) => {
+        ownedServer.close(() => {
+          resolve()
+        })
+      })
     }
     await dataSource.destroy()
   }

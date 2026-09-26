@@ -143,6 +143,10 @@ async function main(): Promise<void> {
         `DELETE FROM audit_log WHERE booking_id IN (SELECT id FROM booking WHERE room_id IN (${roomParams}))`,
         roomIds,
       )
+      await dataSource.query(
+        `DELETE FROM notification WHERE booking_id IN (SELECT id FROM booking WHERE room_id IN (${roomParams}))`,
+        roomIds,
+      )
       await dataSource.query(`DELETE FROM booking WHERE room_id IN (${roomParams})`, roomIds)
       await dataSource.query(`DELETE FROM meeting_room WHERE id IN (${roomParams})`, roomIds)
     }

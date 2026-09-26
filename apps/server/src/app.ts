@@ -18,6 +18,7 @@ import { BookingResolver } from './modules/booking/booking.resolver'
 import { EmployeeResolver } from './modules/employee/employee.resolver'
 import { EquipmentResolver } from './modules/equipment/equipment.resolver'
 import { AuditResolver } from './modules/audit/audit.resolver'
+import { NotificationResolver } from './modules/notification/notification.resolver'
 import { PermissionResolver } from './modules/rbac/permission.resolver'
 import { RbacResolver } from './modules/rbac/rbac.resolver'
 import { RoleResolver } from './modules/rbac/role.resolver'
@@ -52,6 +53,7 @@ export async function createApp(dataSource: DataSource): Promise<express.Express
       EquipmentResolver,
       BookingResolver,
       AuditResolver,
+      NotificationResolver,
     ],
     authChecker,
     validate: true,

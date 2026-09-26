@@ -27,6 +27,9 @@
     "test:booking-approval": "npm run test:booking-approval -w apps/server",
     "test:s8": "npm run test:s8 -w apps/server",
     "test:booking-detail": "npm run test:booking-detail -w apps/server",
+    "test:s9": "npm run test:s9 -w apps/server",
+    "test:realtime": "npm run test:realtime -w apps/server",
+    "test:email": "npm run test:email -w apps/server",
     "typecheck": "npm run typecheck -w packages/shared && npm run typecheck -w apps/server"
   },
   "engines": {

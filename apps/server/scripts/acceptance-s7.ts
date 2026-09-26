@@ -182,6 +182,7 @@ async function createBooking(employeeId: string, roomId: string, equipmentId: st
 async function cleanup(dataSource: DataSource): Promise<void> {
   await dataSource.query('DELETE FROM audit_log WHERE booking_id IN (SELECT id FROM booking WHERE purpose LIKE $1 OR purpose LIKE $2)', [`${BOOKING_PREFIX}%`, `${NFR_PREFIX}%`])
   await dataSource.query('DELETE FROM booking_equipment WHERE booking_id IN (SELECT id FROM booking WHERE purpose LIKE $1 OR purpose LIKE $2)', [`${BOOKING_PREFIX}%`, `${NFR_PREFIX}%`])
+  await dataSource.query('DELETE FROM notification WHERE booking_id IN (SELECT id FROM booking WHERE purpose LIKE $1 OR purpose LIKE $2)', [`${BOOKING_PREFIX}%`, `${NFR_PREFIX}%`])
   await dataSource.query('DELETE FROM booking WHERE purpose LIKE $1 OR purpose LIKE $2', [`${BOOKING_PREFIX}%`, `${NFR_PREFIX}%`])
   await dataSource.getRepository(Employee).delete([{ email: Like(`${FIXTURE_PREFIX}%`) }, { email: Like(`${NFR_PREFIX}%`) }])
   await dataSource.query('DELETE FROM meeting_room WHERE name LIKE $1', [`${ROOM_PREFIX}%`])
@@ -325,6 +326,7 @@ async function testNfr4Performance(dataSource: DataSource): Promise<void> {
   log('         --- cleaning up 100k fixtures ---')
   await dataSource.query('DELETE FROM audit_log WHERE booking_id IN (SELECT id FROM booking WHERE purpose LIKE $1)', [`${BOOKING_PREFIX}%`])
   await dataSource.query('DELETE FROM booking_equipment WHERE booking_id IN (SELECT id FROM booking WHERE purpose LIKE $1)', [`${BOOKING_PREFIX}%`])
+  await dataSource.query('DELETE FROM notification WHERE booking_id IN (SELECT id FROM booking WHERE purpose LIKE $1)', [`${BOOKING_PREFIX}%`])
   await dataSource.query('DELETE FROM booking WHERE purpose LIKE $1', [`${BOOKING_PREFIX}%`])
   const remaining = (await dataSource.query('SELECT count(*)::int AS c FROM booking WHERE purpose LIKE $1', [`${BOOKING_PREFIX}%`])) as Array<{ c: number }>
   log(`         remaining bookings after cleanup: ${String(remaining[0]?.c)}`)

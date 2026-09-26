@@ -1,11 +1,11 @@
-import type { DataSource } from 'typeorm'
+import type { DataSource, EntityManager } from 'typeorm'
 import { AuditService } from '../audit/audit.service'
 import type { AuditAction } from '../audit/audit-log.entity'
 import { DomainError } from '../../common/errors/domain-error'
 import { ConflictError } from '../../common/errors/conflict-error'
 import { NotFoundError } from '../../common/errors/not-found-error'
 import { InputValidationError } from '../../common/errors/field-errors'
-import { runInTransaction } from '../../common/db/transaction'
+import { runInTransaction, type TransactionalEntityManager } from '../../common/db/transaction'
 import { isRoomAvailable, getEquipmentFreeQuantity } from './availability'
 import { Booking } from './booking.entity'
 import { BookingEquipment } from './booking-equipment.entity'
@@ -16,6 +16,10 @@ import {
   type BookingPage,
   type BookingReadScope,
 } from './booking.repository'
+import { NotificationService, type BookingDecisionType, type BookingNotificationDetails } from '../notification/notification.service'
+import type { NotificationRecordType } from '../notification/notification.types'
+import { EmailService } from '../../email/email.service'
+import type { EmailTemplate } from '../../email/email.types'
 import type { PaginationArgs } from '../../common/pagination/apply-pagination'
 import type { SortInput } from '../../common/pagination/sort-input'
 import { loadEnv } from '../../config/env'
@@ -25,6 +29,8 @@ export class BookingService {
     private readonly dataSource: DataSource,
     private readonly repository: BookingRepository = new BookingRepository(),
     private readonly auditService: AuditService = new AuditService(),
+    private readonly notificationService: NotificationService = new NotificationService(),
+    private readonly emailService: EmailService = new EmailService(),
   ) {}
 
   async list(
@@ -38,6 +44,100 @@ export class BookingService {
 
   async getVisibleById(bookingId: string, scope: BookingReadScope): Promise<Booking | null> {
     return this.repository.findVisibleById(this.dataSource.manager, bookingId, scope)
+  }
+
+  private notificationDetails(booking: Booking, reason?: string): BookingNotificationDetails {
+    return {
+      bookingId: booking.id,
+      purpose: booking.purpose,
+      startTime: booking.startTime,
+      endTime: booking.endTime,
+      ...(reason === undefined ? {} : { reason }),
+    }
+  }
+
+  /**
+   * Registers a post-commit notification write (FR-90). The write runs in its
+   * own transaction once the booking transaction commits, then the freshly
+   * created rows are pushed to the recipient's live sockets. Nothing here can
+   * fail the booking: the booking is already committed, and a broken
+   * notification or realtime path is logged and swallowed.
+   */
+  private notifyAfterCommit(
+    tx: TransactionalEntityManager,
+    write: (manager: EntityManager) => Promise<readonly NotificationRecordType[]>,
+  ): void {
+    tx.afterCommit(async () => {
+      try {
+        const created = await runInTransaction(this.dataSource, write)
+        await this.notificationService.emitCreated(this.dataSource.manager, created)
+      } catch (error: unknown) {
+        console.error('[booking] post-commit notification write failed', error)
+      }
+    })
+  }
+
+  private notifyRequesterOfDecision(
+    tx: TransactionalEntityManager,
+    requesterId: string | null,
+    actorId: string,
+    type: BookingDecisionType,
+    booking: Booking,
+    reason?: string,
+  ): void {
+    if (requesterId === null || requesterId === actorId) {
+      return
+    }
+    this.notifyAfterCommit(tx, async (manager) => [
+      await this.notificationService.notifyRequesterOfDecision(
+        manager,
+        requesterId,
+        type,
+        this.notificationDetails(booking, reason),
+      ),
+    ])
+    this.enqueueDecisionEmail(tx, requesterId, type, booking, reason)
+  }
+
+  /**
+   * FR-61: the requester also gets a transactional email for a decision.
+   *
+   * Deliberately a second `afterCommit` registration rather than part of the
+   * notification write: the outbox row and the notification row have
+   * independent fates (the email can fail and be retried for hours), and one
+   * failing must not suppress the other. The row is written inside the
+   * post-commit transaction, so it lands only once the booking is durable, and
+   * the dispatcher sends it later.
+   */
+  private enqueueDecisionEmail(
+    tx: TransactionalEntityManager,
+    requesterId: string,
+    type: BookingDecisionType,
+    booking: Booking,
+    reason?: string,
+  ): void {
+    const template: EmailTemplate = type === 'BOOKING_APPROVED' ? 'BOOKING_APPROVED' : 'BOOKING_REJECTED'
+    tx.afterCommit(async () => {
+      try {
+        await runInTransaction(this.dataSource, async (manager) => {
+          if (template === 'BOOKING_REJECTED' && reason === undefined) {
+            // Rejections always carry a reason (validated at the input layer);
+            // bail out rather than queue a rejection with no explanation.
+            return null
+          }
+          const room = await this.repository.findRoom(manager, booking.roomId)
+          return this.emailService.enqueueForEmployee(manager, requesterId, template, {
+            purpose: booking.purpose,
+            roomName: room?.name ?? 'a room',
+            startTime: booking.startTime.toISOString(),
+            endTime: booking.endTime.toISOString(),
+            ...(reason === undefined ? {} : { reason }),
+          })
+        })
+      } catch (error: unknown) {
+        console.error('[booking] post-commit email enqueue failed', error)
+      }
+    })
   }
 
   async createBooking(employeeId: string, input: CreateBookingInput): Promise<Booking>
@@ -118,6 +218,13 @@ export class BookingService {
         performedById: employeeId,
       })
 
+      this.notifyAfterCommit(manager, (notificationManager) =>
+        this.notificationService.notifyApprovers(notificationManager, {
+          ...this.notificationDetails(booking),
+          requesterId: employeeId,
+        }),
+      )
+
       return booking
     })
   }
@@ -174,6 +281,14 @@ export class BookingService {
         newStatus: 'CANCELLED',
         performedById: employeeId,
       })
+
+      this.notifyRequesterOfDecision(
+        manager,
+        booking.employeeId,
+        employeeId,
+        'BOOKING_CANCELLED',
+        cancelledBooking,
+      )
 
       return cancelledBooking
     })
@@ -237,6 +352,13 @@ export class BookingService {
         newStatus: 'APPROVED',
         performedById: managerId,
       })
+      this.notifyRequesterOfDecision(
+        manager,
+        booking.employeeId,
+        managerId,
+        'BOOKING_APPROVED',
+        approvedBooking,
+      )
       return approvedBooking
     })
   }
@@ -277,6 +399,14 @@ export class BookingService {
         newStatus: 'REJECTED',
         performedById: managerId,
       })
+      this.notifyRequesterOfDecision(
+        manager,
+        booking.employeeId,
+        managerId,
+        'BOOKING_REJECTED',
+        rejectedBooking,
+        reason,
+      )
       return rejectedBooking
     })
   }

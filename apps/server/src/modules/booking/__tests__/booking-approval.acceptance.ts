@@ -138,7 +138,14 @@ async function main(): Promise<void> {
   async function cleanup(includeEmployees = false): Promise<void> {
     await deleteByIds((p) => `DELETE FROM booking_equipment WHERE booking_id IN (${p})`, bookingIds)
     await deleteByIds((p) => `DELETE FROM audit_log WHERE booking_id IN (${p})`, bookingIds)
+    await deleteByIds((p) => `DELETE FROM notification WHERE booking_id IN (${p})`, bookingIds)
     await deleteByIds((p) => `DELETE FROM booking WHERE id IN (${p})`, bookingIds)
+    // The outbox is addressed, not linked to a booking, so clear the emails
+    // addressed to the fixture employees before those employees are deleted.
+    await deleteByIds(
+      (p) => `DELETE FROM email_outbox WHERE to_email IN (SELECT email FROM employee WHERE id IN (${p}))`,
+      employeeIds,
+    )
     await deleteByIds((p) => `DELETE FROM meeting_room WHERE id IN (${p})`, roomIds)
     await deleteByIds((p) => `DELETE FROM equipment WHERE id IN (${p})`, equipmentIds)
     if (includeEmployees) {

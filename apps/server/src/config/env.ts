@@ -40,6 +40,10 @@ export interface Env {
     apiKey: string
     emailFrom: string
   }
+  email: {
+    dispatchCron: string
+    maxAttempts: number
+  }
   rejectionReasonMinLength: number
   reminderLeadTimeMinutes: number
   admin: {
@@ -109,6 +113,10 @@ export function loadEnv(): Env {
     sendgrid: {
       apiKey: optional('SENDGRID_API_KEY', ''),
       emailFrom: optional('EMAIL_FROM', ''),
+    },
+    email: {
+      dispatchCron: optional('EMAIL_DISPATCH_CRON', '* * * * *'),
+      maxAttempts: requiredInt('EMAIL_MAX_ATTEMPTS', 5),
     },
     rejectionReasonMinLength: requiredInt('REJECTION_REASON_MIN_LENGTH', 10),
     reminderLeadTimeMinutes: requiredInt('REMINDER_LEAD_TIME_MINUTES', 60),

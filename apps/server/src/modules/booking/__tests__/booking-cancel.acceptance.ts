@@ -194,6 +194,7 @@ async function cleanup(dataSource: DataSource, fixture: Fixture): Promise<void> 
   if (bookingIds.length > 0) {
     await dataSource.query('DELETE FROM booking_equipment WHERE booking_id = ANY($1::uuid[])', [bookingIds])
     await dataSource.query('DELETE FROM audit_log WHERE booking_id = ANY($1::uuid[])', [bookingIds])
+    await dataSource.query('DELETE FROM notification WHERE booking_id = ANY($1::uuid[])', [bookingIds])
     await dataSource.query('DELETE FROM booking WHERE id = ANY($1::uuid[])', [bookingIds])
   }
   await dataSource.query('DELETE FROM equipment WHERE id = $1', [fixture.equipmentId])

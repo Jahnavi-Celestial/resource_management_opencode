@@ -118,6 +118,10 @@ async function cleanupFixture(dataSource: DataSource, fixture: Fixture): Promise
     'DELETE FROM audit_log WHERE booking_id IN (SELECT id FROM booking WHERE room_id = ANY($1::uuid[]))',
     [fixture.roomIds],
   )
+  await dataSource.query(
+    'DELETE FROM notification WHERE booking_id IN (SELECT id FROM booking WHERE room_id = ANY($1::uuid[]))',
+    [fixture.roomIds],
+  )
   await dataSource.query('DELETE FROM booking WHERE room_id = ANY($1::uuid[])', [fixture.roomIds])
 
   if (fixture.equipmentId !== undefined) {

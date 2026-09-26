@@ -8,6 +8,8 @@ type Query {
   equipment(page: Int! = 1, pageSize: Int! = 20, search: String, activeOnly: Boolean! = false, sort: SortInput): PaginatedEquipment!
   equipmentAvailability(endDate: DateTimeISO!, startDate: DateTimeISO!, equipmentId: String!): EquipmentAvailabilityResult!
   auditLogs(filter: AuditLogFilter, sort: SortInput, page: Int! = 1, pageSize: Int! = 20, bookingId: ID, actorId: ID, performedById: ID, action: AuditAction, status: BookingStatus, from: DateTimeISO, to: DateTimeISO): PaginatedAuditLogs!
+  myNotifications(sort: SortInput, page: Int! = 1, pageSize: Int! = 20, type: NotificationType, unreadOnly: Boolean): PaginatedNotifications!
+  unreadCount: Int!
   permissions(pageSize: Int! = 20, page: Int! = 1): PermissionPage!
   role(id: String!): Role!
   roles(pageSize: Int! = 20, page: Int! = 1): RolePage!
@@ -225,6 +227,30 @@ input AuditLogFilter {
   endDate: DateTimeISO
 }
 
+type PaginatedNotifications {
+  items: [Notification!]!
+  totalCount: Int!
+}
+
+type Notification {
+  id: ID!
+  recipientId: ID!
+  bookingId: ID!
+  type: NotificationType!
+  title: String!
+  message: String!
+  isRead: Boolean!
+  createdAt: DateTimeISO!
+}
+
+enum NotificationType {
+  BOOKING_PENDING
+  BOOKING_APPROVED
+  BOOKING_REJECTED
+  BOOKING_CANCELLED
+  REMINDER
+}
+
 type PermissionPage {
   items: [Permission!]!
   total: Int!
@@ -268,6 +294,8 @@ type Mutation {
   deleteEmployee(id: String!): Boolean!
   createEquipment(input: CreateEquipmentInput!): Equipment!
   updateEquipment(input: UpdateEquipmentInput!): Equipment!
+  markNotificationRead(id: String!): Notification!
+  markAllNotificationsRead: Int!
   assignPermissionToRole(input: RolePermissionInput!): Role!
   removePermissionFromRole(input: RolePermissionInput!): Role!
   assignRoleToEmployee(input: EmployeeRoleInput!): Employee!
