@@ -219,8 +219,10 @@ export function Form({
       )
     }
 
+    // `key` is deliberately absent from this object. React only accepts it as a
+    // direct JSX attribute and warns when it arrives through a spread, so each
+    // call site below passes `key={name}` itself.
     const textFieldProps = {
-      key: name,
       id: `form-field-${name}`,
       label: field.label,
       required: field.required === true,
@@ -236,6 +238,7 @@ export function Form({
       return (
         <Box key={name} data-field={name} sx={{ mb: 2 }}>
           <TextField
+            key={name}
             {...textFieldProps}
             select
             value={String(value ?? '')}
@@ -264,6 +267,7 @@ export function Form({
     return (
       <Box key={name} data-field={name} sx={{ mb: 2 }}>
         <TextField
+          key={name}
           {...textFieldProps}
           type={inputType}
           value={value === null || value === undefined ? '' : String(value)}
