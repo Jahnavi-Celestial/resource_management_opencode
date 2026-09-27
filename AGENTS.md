@@ -85,8 +85,19 @@ TS scaffold, MUI v9 with a corporate-blue light-only theme
 the gitignored `src/graphql/`, an Apollo Client with `HttpLink` + a bearer auth link
 and no ws link, a MUI login page, `AuthProvider` (login mutation → store JWT → `me` on
 load), `usePermission`/`useAnyPermission`, and `RequirePermission` guards driven by the
-one `NAV_ITEMS` list. C1+ (DataTable/Form on DataGrid, the real screens, the ws client)
-is next.
+one `NAV_ITEMS` list. C1 is complete: `src/components/DataTable/` (a generic,
+entity-free `DataGrid` wrapper — server pagination/search/sort/filter, dynamic
+columns, controlled `TableState`), `src/components/Form/` (field-schema driven,
+dialog and inline, inline server field errors), `src/components/ConfirmDialog/`,
+`src/lib/{displayName,fieldErrors,format,useDebouncedValue}.ts`, and four real
+CRUD screens (`features/{employees,roles,rooms,equipment}`) wired into
+`AppRoutes`/`NAV_ITEMS` with `usePermission` gating. `npm run test:c1` is the
+single entry point: it boots the real server on an ephemeral port, records every
+GraphQL request through a `fetch` wrapper, and proves the six C1 claims
+(four-screen reuse, server-side page/sort/search/filter variables, the NFR-6
+inline field error, `displayName()`, permission hiding plus the server's own
+`FORBIDDEN`, and a real Employee create/read/update/delete round trip). C2
+(booking screens), C3 (the `ws` client and notification UI) and the rest are next.
 
 ## Commands
 
@@ -163,6 +174,15 @@ npm run test:c0         # C0 client foundation: renders the real app (jsdom) aga
                         # credentials fail visibly with no token, nav/routes follow the permission set and a deep
                         # link to a gated route is refused, the MUI theme renders the corporate blue (and a
                         # different theme renders differently), and the Apollo client has no ws link
+                        # (needs local Postgres, no dev server)
+npm run test:c1         # C1 acceptance suite: boots the real server on an ephemeral port and drives the four
+                        # CRUD screens in jsdom, recording every GraphQL request through a fetch wrapper —
+                        # all four screens import the same DataTable/Form and nothing outside the shared
+                        # component touches @mui/x-data-grid, page/sort/search and the room minCapacity/
+                        # activeOnly filters reach the server as variables, a duplicate email renders inline
+                        # under its own input with the dialog still open, displayName() matches the server's
+                        # DELETED_USER_DISPLAY_NAME, a manager sees no write controls and the server still
+                        # answers FORBIDDEN, and Employee create/edit/delete round-trips through the real API
                         # (needs local Postgres, no dev server)
 npm run dev:client      # Vite dev server for apps/client (5173; set VITE_GRAPHQL_URL, default
                         # http://localhost:4000/graphql)
@@ -333,9 +353,9 @@ Scripts outside `npm run dev`:
     `useQuery(MeDocument)` is fully typed and no operation is ever hand-written.
     The test suite fails if a `query`/`mutation` string appears anywhere outside
     `features/*/graphql/`.
-  - `@/` is an alias for `src/` in all three of tsconfig, vite.config.ts and
-    vitest.c0.config.ts; keep all three in step or the codegen output and the app
-    resolve differently.
+  - `@/` is an alias for `src/` in all four of tsconfig, vite.config.ts,
+    vitest.c0.config.ts and vitest.c1.config.ts; keep all four in step or the
+    codegen output and the app resolve differently.
   - `AppProviders` (`ApolloProvider` → `ThemeProvider` → `CssBaseline` → router
     → `AuthProvider`) is the one provider stack, used by `main.tsx` *and* by the
     C0 suite, so the app under test is the app that ships. The router is
@@ -358,3 +378,47 @@ Scripts outside `npm run dev`:
     calls `client.clearStore()` *before* adopting a new identity so one render
     cannot show the previous user's cached `me`, and drops a token the server
     rejects rather than retrying it.
+  - Client C1, the shared table and form. `DataTable` is *server*-driven (NFR-7):
+    the grid is told `rows`/`rowCount`, and search/sort/filter/page are translated
+    into GraphQL variables by the screen, never applied locally. Three things in
+    it are load-bearing, and each one is a bug the C1 suite caught, so do not
+    "simplify" them away:
+    - The search draft is adopted from the parent only when the *incoming*
+      `state.search` identity changes (`agreedSearch`), never when a keystroke is
+      still inside the debounce. Comparing a draft against `state.search`
+      directly looks like an external reset and discards the first character typed
+      into an empty search box.
+    - The debounced filter loop skips boolean filters. A boolean filter is applied
+      on toggle, so it has no draft; reconciling it against its (always empty)
+      draft deletes the value the user just set the moment any *other* filter is
+      typed — a silent, order-dependent loss.
+    - A testid on an interactive control belongs on the `<input>`
+      (`slotProps={{ htmlInput: { 'data-testid': … } }}`), not on the `TextField`
+      root, or `user.clear()`/`user.type()` in a suite act on a `<div>`. A
+      boolean filter carries no testid at all: it is reached by its accessible
+      name, which is what a screen reader uses too.
+  - `Form` owns the submit rejection. A screen's `onSubmit` awaits a mutation that
+    *rejects* when the server refuses the write, and the screen renders that
+    refusal from the mutation's own error state (`parseServerError` → inline field
+    error, or one form-level `Alert`). So `Form` awaits `onSubmit` and swallows
+    the rejection: the dialog must stay open with the typed values, and an
+    unhandled rejection is not a UI state. The delete/retire handlers in the four
+    screens do the same explicitly, because a confirm dialog has no form to render
+    a field error in — they keep the dialog open and show `writeErrorMessage` in a
+    `screen-write-error` banner instead.
+  - `displayName()` returns the server's `DELETED_USER_DISPLAY_NAME`
+    (`'Deleted user'`) for a null/blank name, and `first + last` otherwise; the C1
+    suite reads the server loader's source to keep the two in step, because C2 and
+    C4 both call this one function for a booking requester and an audit actor.
+  - There is no `deleteRoom`/`deleteEquipment` in the API. "Delete" on those two
+    screens is `update*(input: { isActive: false })`, behind the same confirm
+    dialog, and the button says Retire so the UI does not promise an API that does
+    not exist.
+  - The C1 suite allowlists exactly two unhandled rejections in
+    `c1.harness.tsx` — Apollo Client 4's `AbortError` on query teardown and its
+    `CombinedGraphQLErrors` rethrow for a refused mutation — and asserts that
+    *nothing else* escaped (`unexpectedRejections()`). Both entries are Apollo's
+    own internal throw (`QueryManager.js` + rxjs frames, no `src/` frame); declaring
+    `onError` on the hook was measured and changes neither, so no such stub is in
+    the code. The allowlist was checked for being non-vacuous: an injected
+    rejection fails the suite. Do not widen it.

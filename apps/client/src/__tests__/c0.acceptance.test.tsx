@@ -300,9 +300,11 @@ describe('C0 — client foundation', () => {
       'room:write',
     ])
 
-    // The UI is driven by that set: the admin sees every nav item.
+    // The UI is driven by that set: the admin sees every nav item. Eight since
+    // C1 added the Roles screen; the assertion is deliberately a count, not a
+    // list, so a nav item cannot be added without this number moving.
     const nav = screen.getByTestId('nav')
-    expect(within(nav).getAllByRole('listitem')).toHaveLength(7)
+    expect(within(nav).getAllByRole('listitem')).toHaveLength(8)
     expect(screen.getByTestId('current-user-email')).toHaveTextContent(envValue('ADMIN_EMAIL'))
     expect(screen.getByTestId('role-Admin')).toBeInTheDocument()
     view.unmount()

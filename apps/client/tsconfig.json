@@ -17,5 +17,5 @@
     "resolveJsonModule": true,
     "skipLibCheck": true
   },
-  "include": ["src", "codegen.ts", "vite.config.ts", "vitest.c0.config.ts"]
+  "include": ["src", "codegen.ts", "vite.config.ts", "vitest.c0.config.ts", "vitest.c1.config.ts"]
 }

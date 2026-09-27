@@ -4,9 +4,14 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthProvider'
 import { RequirePermission } from '@/auth/RequirePermission'
 import { AppShell } from '@/components/layout/AppShell'
-import { firstPermittedPath, NAV_ITEMS } from '@/components/layout/nav-items'
+import { firstPermittedPath, NAV_ITEMS, type NavItem } from '@/components/layout/nav-items'
 import { PlaceholderPage } from '@/components/layout/PlaceholderPage'
 import { LoginPage } from '@/features/auth/pages/LoginPage'
+import { EmployeesPage } from '@/features/employees/pages/EmployeesPage'
+import { EquipmentPage } from '@/features/equipment/pages/EquipmentPage'
+import { RolesPage } from '@/features/roles/pages/RolesPage'
+import { RoomsPage } from '@/features/rooms/pages/RoomsPage'
+import type { ReactElement } from 'react'
 
 /** Sends `/` to the first screen this session is allowed to open. */
 function Home(): React.ReactNode {
@@ -36,6 +41,22 @@ function NotFound(): React.ReactNode {
   )
 }
 
+/**
+ * C1 replaced four of these with real screens. The map stays the single source
+ * of truth: a nav item that is not listed here renders the placeholder behind
+ * exactly the same guard, so adding a screen can never widen access.
+ */
+const REAL_SCREENS: Readonly<Record<string, ReactElement>> = {
+  '/employees': <EmployeesPage />,
+  '/roles': <RolesPage />,
+  '/rooms': <RoomsPage />,
+  '/equipment': <EquipmentPage />,
+}
+
+function screenFor(item: NavItem): React.ReactNode {
+  return REAL_SCREENS[item.path] ?? <PlaceholderPage item={item} />
+}
+
 export function AppRoutes(): React.ReactNode {
   return (
     <Routes>
@@ -56,7 +77,7 @@ export function AppRoutes(): React.ReactNode {
             path={item.path}
             element={
               <RequirePermission keys={item.keys} mode={item.mode ?? 'any'}>
-                <PlaceholderPage item={item} />
+                {screenFor(item)}
               </RequirePermission>
             }
           />
