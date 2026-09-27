@@ -78,7 +78,15 @@ QueryBuilder reads), `report.service.ts` (range/status validation only, no
 transaction — a report mutates nothing), `report.resolver.ts` (four queries,
 every one `@Authorized('report:read')`, no mutation exists) and `report.inputs.ts`/
 `report.types.ts`. `npm run test:reports` (alias `test:s11`) is the single entry
-point. The client (C0+) is not started yet.
+point. C0 (client foundation) is complete: `apps/client` holds the Vite + React +
+TS scaffold, MUI v9 with a corporate-blue light-only theme
+(`src/theme/index.ts`, `ThemeProvider` in `src/AppProviders.tsx`), graphql-code-generator
+(client-preset) against `apps/server/schema.graphql` with generated output in
+the gitignored `src/graphql/`, an Apollo Client with `HttpLink` + a bearer auth link
+and no ws link, a MUI login page, `AuthProvider` (login mutation → store JWT → `me` on
+load), `usePermission`/`useAnyPermission`, and `RequirePermission` guards driven by the
+one `NAV_ITEMS` list. C1+ (DataTable/Form on DataGrid, the real screens, the ws client)
+is next.
 
 ## Commands
 
@@ -148,7 +156,18 @@ npm run test:reports     # S11 reports (alias test:s11): four report queries aga
                          # suite also captures the SQL TypeORM really sends, asserts GROUP BY + aggregate
                          # functions are in it, and runs EXPLAIN on that exact statement (FR-70); plus
                          # report:read gating, read-only-schema and range/status validation
-                         # (needs local Postgres, no dev server)
+                          # (needs local Postgres, no dev server)
+npm run test:c0         # C0 client foundation: renders the real app (jsdom) against a real GraphQL server the
+                        # suite boots on an ephemeral port — codegen output present and typed with no hand-written
+                        # GraphQL, valid login stores the JWT and `me` populates the 19-key permission set, invalid
+                        # credentials fail visibly with no token, nav/routes follow the permission set and a deep
+                        # link to a gated route is refused, the MUI theme renders the corporate blue (and a
+                        # different theme renders differently), and the Apollo client has no ws link
+                        # (needs local Postgres, no dev server)
+npm run dev:client      # Vite dev server for apps/client (5173; set VITE_GRAPHQL_URL, default
+                        # http://localhost:4000/graphql)
+npm run codegen:client  # regenerate apps/client/src/graphql/ from apps/server/schema.graphql
+                        # (run after any server schema change; the output is gitignored)
 npm run dev            # boot server; GraphQL at http://localhost:3000/graphql,
                        # health check at http://localhost:3000/health,
                        # realtime at ws://localhost:3000/ws?token=<jwt>
@@ -304,3 +323,38 @@ Scripts outside `npm run dev`:
   alias)` as a derived table when the string starts *and* ends with `(`/`)` —
   it quotes anything else as an identifier, which is a very confusing error.
 
+- Client C0, in `apps/client`:
+  - `codegen.ts` reads `../server/schema.graphql` — the same file the server
+    rewrites on boot — and writes `src/graphql/` (gitignored). Run
+    `npm run codegen:client` after any schema change, or the client's types are
+    stale. `client-preset` v6 emits `TypedDocumentNode` documents plus result and
+    variable types, *not* React hook wrappers: with Apollo Client 4 the generated
+    document is the typed input to `useQuery`/`useMutation`, so
+    `useQuery(MeDocument)` is fully typed and no operation is ever hand-written.
+    The test suite fails if a `query`/`mutation` string appears anywhere outside
+    `features/*/graphql/`.
+  - `@/` is an alias for `src/` in all three of tsconfig, vite.config.ts and
+    vitest.c0.config.ts; keep all three in step or the codegen output and the app
+    resolve differently.
+  - `AppProviders` (`ApolloProvider` → `ThemeProvider` → `CssBaseline` → router
+    → `AuthProvider`) is the one provider stack, used by `main.tsx` *and* by the
+    C0 suite, so the app under test is the app that ships. The router is
+    `MemoryRouter` when `initialEntries` is passed and `BrowserRouter` otherwise.
+  - The theme's corporate blue is `#0f4c81`, deliberately not MUI's stock
+    `#1976d2`, and the C0 suite asserts the rendered button's
+    `--variant-containedBg` is ours. Keep it that way: a themed surface has to be
+    distinguishable from the library default for the test to mean anything.
+    `@mui/x-data-grid` v9 has no `components.MuiDataGrid` slot — the grid reads
+    `palette.DataGrid.{bg,headerBg,pinnedBg}` instead, which is what the theme
+    sets, via the `themeAugmentation` type-only import.
+  - There is no WebSocket link (FR-59: GraphQL is query/mutation only). The
+    gateway client arrives in C3 as its own module under `src/realtime/`; the
+    suite fails if one appears in the Apollo link chain.
+  - Client-side permission checks are a usability affordance only (NFR-5): the
+    server re-checks every operation. `keys={[]}` on `RequirePermission` is the
+    "any signed-in user" guard, and `NAV_ITEMS` is the single source for both the
+    drawer and the route table so a link and its guard cannot drift.
+  - `AuthProvider` mirrors the token into state (that is what re-triggers `me`),
+    calls `client.clearStore()` *before* adopting a new identity so one render
+    cannot show the previous user's cached `me`, and drops a token the server
+    rejects rather than retrying it.

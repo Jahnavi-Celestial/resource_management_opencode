@@ -1,12 +1,31 @@
 # Resource Booking Management System — Build Plan
 
-Source of truth: `docs/requirements.md` (197 lines / 21,805 bytes as of this plan).
+Source of truth: `docs/requirements.md` (200 lines / 22,518 bytes as of this plan).
 This document is the folder structure and build order derived from it. No code has
 been written yet — this is the plan only.
 
 Environment verified at planning time: Node v22.23.2, npm 10.9.8, local PostgreSQL 18.4
 (EDB install) at `/Library/PostgreSQL/18/bin`, server already running on port 5432,
 `btree_gist` extension available. No Docker/CI per §5.4 — local-dev only.
+
+**Changelog (MUI adopted for client styling):** no component library was named in
+`docs/requirements.md`; §5.1's Frontend row now names **Material UI (MUI)**
+alongside React/TypeScript/Apollo. Styling direction: a corporate-blue palette,
+**light mode only** in v1 — no dark-mode toggle. Consequences for the client
+folder structure in §1:
+
+- `components/ui/` (Button, Modal, Badge, DateRangePicker) becomes thin wrappers
+  around MUI equivalents, or is dropped entirely in favour of importing MUI
+  components directly where no wrapping is needed.
+- `components/DataTable/` is built on MUI's DataGrid in **server-side
+  pagination/sort/filter mode** (NFR-7), not a from-scratch table.
+- `components/Form/` is built on MUI form components (TextField, Select, etc.)
+  driven by the same field-schema approach already planned.
+- `styles/global.css` and `styles/variables.css` are **replaced** by an MUI
+  theme file (e.g. `theme/index.ts`) defining the palette, typography and
+  component overrides. Plain CSS variables are no longer the styling mechanism.
+- C0's scaffold step adds `@mui/material`, `@mui/x-data-grid` (for the
+  DataTable), `@emotion/react` and `@emotion/styled`.
 
 **Changelog vs. the previous version of this plan:** `docs/requirements.md` §6 was
 updated to state that `AuditLog.performedBy` is nullable at the schema level (to
@@ -49,6 +68,8 @@ they're wrong; otherwise the plan below proceeds on this basis.
 | 8   | Bootstrap-admin credentials (email + initial password) are not specified anywhere in requirements.md                                                        | `ADMIN_EMAIL`/`ADMIN_PASSWORD` env vars (documented in `.env.example`, with local-dev defaults in code); `admin.seed.ts` creates the admin if missing and syncs its password to `ADMIN_PASSWORD` on every run; unset `ADMIN_PASSWORD` is a hard error when `NODE_ENV=production` | FR-5's "administrators create employees" needs one admin to pre-exist on a fresh DB; env-configured + synced keeps the bootstrap account seed-owned and deterministic while letting real deployments choose their own credentials                                                                                             |
 | 9   | FR-72 suggests the reserved system account be `system@internal` ("e.g."), which is not a syntactically valid email                                          | Seed `system@internal.local` instead (`SYSTEM_EMPLOYEE_EMAIL` in `modules/employee/system-account.ts`)                                                                                                                                                                           | The `.local` TLD is reserved (RFC 6762, never routable), so collision risk is nil, and login input validation can stay strict (`@IsEmail`) — the service-layer refusal of the system account then fires with the same uniform `UNAUTHENTICATED` response as unknown-email, instead of being short-circuited by a format error |
 | 10  | No cadence is specified anywhere for the FR-72/FR-74 jobs — §3.13 says only "a scheduled job", and §7 configures `REMINDER_LEAD_TIME_MINUTES` but no interval                                                            | One shared `BOOKING_JOBS_CRON` (default `*/5 * * * *`) drives both `complete-elapsed-bookings` and `send-reminders`, env-configurable exactly like S9's `EMAIL_DISPATCH_CRON`; the email dispatcher keeps its own 1-minute cron                                                             | The interval is purely a freshness/latency budget, because FR-75 makes both jobs idempotent and concurrency-safe, so running them more often costs only an index lookup. 5 minutes bounds reminder staleness at 5/60th of the 60-minute default lead time, and bounds how long a finished booking stays visibly APPROVED. One variable rather than two: both jobs read the same booking clock, and a deployment that wants a different cadence changes one line. Not tighter (1 minute) because the extra ticks buy nothing measurable, not looser (15+) because a 15-minute reminder lag against a 60-minute lead time starts to matter for a user who books 20 minutes ahead |
+
+| 11  | No component library is named in requirements.md §5.1, and no branding/colour guidance exists                                                                 | Adopt **Material UI (MUI)** with a **corporate-blue palette, light mode only** (no dark-mode toggle in v1); NFR-7's DataTable/Form are built on DataGrid and MUI form primitives                                                     | A consistent, accessible, well-tested component library reduces client build risk on a solo first-time-with-OpenCode project, and MUI's DataGrid directly satisfies NFR-7's pagination/search/sort/filter requirement without custom-building it. Corporate blue / light-only is the neutral default where no brand direction was given; a theme file keeps the palette swappable later without touching components |
 
 ### Standing rule — inner services never open their own transaction
 
@@ -165,10 +186,10 @@ resource_management/
             │   ├── ws-client.ts       # token-authenticated WebSocket, reconnect/backoff
             │   └── useNotificationSocket.ts
             ├── components/
-            │   ├── DataTable/         # generic, server-side pagination/search/sort/filter (NFR-7)
-            │   ├── Form/              # generic, field-schema driven (NFR-7)
+            │   ├── DataTable/         # built on MUI DataGrid, server-side pagination/search/sort/filter (NFR-7)
+            │   ├── Form/              # field-schema driven, on MUI form primitives (TextField, Select, ...) (NFR-7)
             │   ├── layout/            # AppShell, permission-driven Nav, NotificationBell
-            │   └── ui/                # Button, Modal, Badge, DateRangePicker
+            │   └── ui/                # thin MUI wrappers (Button, Modal, Badge, DateRangePicker) — or direct MUI imports where no wrapping is needed
             ├── features/
             │   ├── employees/  ├── roles/  ├── rooms/  ├── equipment/
             │   ├── bookings/          # list, create, detail, approval queue, availability views
@@ -176,7 +197,7 @@ resource_management/
             │   └── <each>/{components, hooks, graphql, pages}
             ├── hooks/                 # useTableQuery (table state ↔ GraphQL vars), useDebounce
             ├── lib/                   # date formatting, displayName() → "Deleted user" fallback — used for booking requester (FR-48) AND audit actor (§6), same helper, same code path
-            └── styles/                # global.css, variables.css
+            └── theme/                 # index.ts — MUI theme: palette, typography, component overrides
 ```
 
 Per-module file convention inside `modules/<name>/` on the server is uniform:
@@ -242,7 +263,7 @@ S0 scaffold ─▶ S1 schema/migrations ─▶ S2 auth+RBAC+seed ─▶ S3 cross
 
 | Phase     | Build                                                                                                                                                                                                                                                                | Depends on                           | Proof                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **C0**    | Vite + React + TS scaffold, `graphql-code-generator` against `schema.graphql`, Apollo Client (`HttpLink` + auth link only — no ws link, since GraphQL is query/mutation-only per FR-59), login page, `AuthProvider`, `usePermission`, permission-driven route guards | S3 (schema emission) + S2 (login/me) | Login → `me` populates permission set → nav renders only permitted items; codegen produces typed hooks with no manual `gql` typing                                                                                                                                                                                                                                                                                                                  |
+| **C0**    | Vite + React + TS scaffold, MUI dependencies (`@mui/material`, `@mui/x-data-grid`, `@emotion/react`, `@emotion/styled`) + `theme/index.ts` provider wired at the app root (corporate-blue palette, light mode only, no dark-mode toggle), `graphql-code-generator` against `schema.graphql`, Apollo Client (`HttpLink` + auth link only — no ws link, since GraphQL is query/mutation-only per FR-59), login page, `AuthProvider`, `usePermission`, permission-driven route guards | S3 (schema emission) + S2 (login/me) | Login → `me` populates permission set → nav renders only permitted items; codegen produces typed hooks with no manual `gql` typing; the running app renders through the MUI `ThemeProvider`, so a themed surface (the login page's submit button) shows the corporate-blue palette and MUI's own baseline styling — proving the theme is applied, not just that the packages install                                                                                                                                                                          |
 | **C1**    | Generic `DataTable` (server pagination/search/sort/filter, dynamic columns) and `Form` (field-schema driven), `lib/displayName()` fallback helper, applied first to Employee/Role/Room/Equipment screens                                                             | S4                                   | Four unrelated list screens import the _same_ `DataTable` component; server field errors from S3 render inline on the same `Form` component (NFR-6/7 proven by reuse, not by separate implementations)                                                                                                                                                                                                                                              |
 | **C2**    | Booking create/list/detail, approval queue, availability views                                                                                                                                                                                                       | S6, S7, S8                           | Successful create shows the booking's UUID + PENDING status on-screen (FR-38); approve/reject controls are hidden without the permission client-side, but a direct mutation call from a non-permitted session is still rejected server-side (proves NFR-5's "client hiding is not the enforcement point"); status-history rows and requester summaries reuse `lib/displayName()` for both audit actor and requester — one component, two call sites |
 | **C3**    | `ws-client.ts` (JWT-authenticated, reconnect/backoff), `NotificationBell`, mark-read                                                                                                                                                                                 | S9                                   | Two browser sessions for the same user: an action in one updates the unread count in the other without a page refresh                                                                                                                                                                                                                                                                                                                               |

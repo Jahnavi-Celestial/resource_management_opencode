@@ -136,7 +136,9 @@ NFR-8 — Auditability: Every state transition is attributable to an actor and a
 5. System Architecture
 5.1 Technology stack
 Layer	Technology
-Frontend	React, TypeScript, CSS, Apollo GraphQL client
+Frontend	React, TypeScript, CSS, Material UI (MUI) component library, Apollo GraphQL client
+				(§5.1: NFR-7's generic DataTable and Form components are built on MUI's DataGrid
+				and form primitives — TextField, Select, etc. — rather than from scratch)
 Backend	Node.js, TypeScript, TypeGraphQL, WebSockets
 Database & ORM	PostgreSQL, TypeORM
 Security & automation	JWT, bcrypt, class-validator, node-cron, SendGrid
