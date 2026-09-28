@@ -96,8 +96,49 @@ single entry point: it boots the real server on an ephemeral port, records every
 GraphQL request through a `fetch` wrapper, and proves the six C1 claims
 (four-screen reuse, server-side page/sort/search/filter variables, the NFR-6
 inline field error, `displayName()`, permission hiding plus the server's own
-`FORBIDDEN`, and a real Employee create/read/update/delete round trip). C2
-(booking screens), C3 (the `ws` client and notification UI) and the rest are next.
+`FORBIDDEN`, and a real Employee create/read/update/delete round trip). C2's
+first half is complete: `features/bookings/` holds the four generated documents
+(`features/bookings/graphql/bookings.graphql.ts`: list, create, bookable rooms,
+bookable equipment) and `pages/BookingsPage.tsx` (create dialog + server-driven
+list). C2's second half is complete too: `pages/BookingDetailPage.tsx` is the
+real FR-45–49 detail read — the requested dates, the server-derived processed
+date/time and who decided it, the full status history, the requester with their
+recent bookings, the room with its other overlapping bookings, and each
+equipment line with its remaining availability for that window — with the
+server's own refusal rendered as a single clean alert.
+`/bookings/:id` is wired and guarded by the `/bookings` nav item, so a row click
+lands on it, and the detail page's own back link and its embedded summaries mean
+the click is now a shortcut over a real link rather than the only way in.
+`npm run test:c2` is the single entry point: it boots the real server and drives
+both screens in jsdom, proving ten claims across two files
+(`c2.acceptance.test.tsx` + `c2.detail.test.tsx`). The list
+half: a successful create shows the booking's UUID and the server's `PENDING`
+status (FR-38); a refused create renders the server's own `CONFLICT` text with
+the dialog still open, and the client-side rules (end after start, start not in
+the past, at least one attendee) never reach the wire; the list and the create
+form are the *same* `DataTable`/`Form` C1 proved reused; a `booking:read:own`
+session's list is exactly the server's scoped page, id for id; and search plus
+every filter reach the server as GraphQL variables. The detail half: a decided
+booking shows its processed block (the approval case and, separately, the
+rejection case with its reason) and a pending one shows none; the history lists
+every transition oldest-first with its actor and timestamp; a deleted requester
+*and* a deleted actor both read "Deleted user" **through `displayName()` itself**;
+the room and equipment sections carry the hand-computed overlap and remaining
+quantities (a projector 5 − 2 = 3, a camera 4 − 1 − 2 = 1); and a signed-in
+employee who may not read the booking gets the server's `FORBIDDEN` text in the
+error alert with no partial data — while the booking's own requester, in a second
+session in the same run, still sees it. C2 is complete: the third half is the
+manager's approval queue (`pages/ApprovalsPage.tsx`, FR-50–56) and the fourth is
+the availability the booking form shows while it is being filled
+(`features/bookings/components/BookingAvailabilityPanel.tsx`, FR-23 room / FR-29
+equipment) plus the whole lifecycle through the app. Every booking screen is in
+`REAL_SCREENS` in `AppRoutes.tsx` and guarded from the same `NAV_ITEMS` list, so
+no booking route is a placeholder any more; `/audit` and `/reports` still are, and
+they belong to C4 (docs/PLAN.md:270), not here. `npm run test:c2` is now five
+files / 24 tests: the list+create and detail files, the approval queue, the
+availability + lifecycle file (`c2.availability.test.tsx`), and the static reuse
+proof (`c2.reuse.test.ts`, no server). C3 (the `ws` client and notification UI)
+is next.
 
 ## Commands
 
@@ -182,7 +223,49 @@ npm run test:c1         # C1 acceptance suite: boots the real server on an ephem
                         # activeOnly filters reach the server as variables, a duplicate email renders inline
                         # under its own input with the dialog still open, displayName() matches the server's
                         # DELETED_USER_DISPLAY_NAME, a manager sees no write controls and the server still
-                        # answers FORBIDDEN, and Employee create/edit/delete round-trips through the real API
+                         # answers FORBIDDEN, and Employee create/edit/delete round-trips through the real API
+                         # (needs local Postgres, no dev server)
+npm run test:c2         # C2 acceptance suite: boots the real server on an ephemeral port and drives the
+                        # booking list + create dialog *and* the booking detail screen in jsdom, recording
+                        # every GraphQL request through a fetch wrapper. The list half: a successful create
+                        # shows the booking UUID and the server's PENDING status, a refused create renders
+                        # the server's own CONFLICT text with the dialog still open while the client-side
+                        # rules (end after start, start not in the past, ≥1 attendee) never reach the wire,
+                        # the list and the create form are the same shared DataTable/Form C1 proved reused, a
+                        # booking:read:own session's list is exactly the server's scoped page id for id, and
+                        # search plus every filter reach the server as GraphQL variables. The detail half
+                        # (FR-45–49): the processed block for an approved *and* a rejected booking and none
+                        # for a pending one, every transition oldest-first with actor + timestamp, a deleted
+                        # requester and a deleted actor both rendered through displayName() itself, the
+                        # hand-computed room/equipment overlap and remaining quantities, and a caller with no
+                        # read permission getting the server's FORBIDDEN with no partial data while the
+                        # requester still sees it. The approval half (FR-50-56): the queue
+                        # lists only PENDING bookings in the order the server fixed and sorts
+                        # nothing itself, approving shows the server's APPROVED answer and the
+                        # decided request leaves the queue, a too-short reason is refused with the
+                        # server's own message under the input, a valid reason is stored, NFR-5 both
+                        # ways (a session holding only booking:approve is offered no Reject anywhere
+                        # on the page while a direct rejectBooking from that same token is FORBIDDEN
+                        # with the booking unchanged; a session with neither decision permission is
+                        # refused the route *and* the direct call), and FR-56's self-decision comes
+                        # back in the dialog the manager is looking at with nothing changed. The
+                        # availability + lifecycle file (FR-23/29): the booking form's panel shows the
+                        # server's own roomAvailability rows and equipmentAvailability numbers for the
+                        # window typed so far, and the request that carried that window is asserted; a
+                        # free window then has to show the server's *empty* answer, which is what stops
+                        # the first half passing vacuously. The lifecycle test is one story across two
+                        # sessions: create (UUID + server's PENDING) -> the row in the requester's own
+                        # list -> a different person approves it from the walked queue -> the detail
+                        # screen's status, its processed-by/at block and the PENDING->APPROVED
+                        # transition, and the panel settles on one window rather than asking
+                        # about every window the form passes through (the querying components are
+                        # not mounted while the draft is moving). The reuse proof (no server): one
+                        # owner of @mui/x-data-grid
+                        # (the shared DataTable + the theme), one form (the shared Form + the login
+                        # page, both named), and exactly one displayName() definition, which the
+                        # detail screen imports and has no copy of.
+                        # One file at a time (fileParallelism: false) - see the runtime note.
+                        # Files: c2.acceptance, c2.detail, c2.approvals, c2.availability, c2.reuse
                         # (needs local Postgres, no dev server)
 npm run dev:client      # Vite dev server for apps/client (5173; set VITE_GRAPHQL_URL, default
                         # http://localhost:4000/graphql)
@@ -339,9 +422,52 @@ Scripts outside `npm run dev`:
 - `report.repository.ts` writes the FR-69 `UNION ALL` fragment without table
   aliases on purpose: a raw fragment inlined as a derived table has no metadata
   in the outer builder, so an `alias.column` reference inside it would be
-  rewritten by property-name replacement. TypeORM only treats a `from(string,
-  alias)` as a derived table when the string starts *and* ends with `(`/`)` —
-  it quotes anything else as an identifier, which is a very confusing error.
+    rewritten by property-name replacement. TypeORM only treats a `from(string,
+    alias)` as a derived table when the string starts *and* ends with `(`/`)` —
+    it quotes anything else as an identifier, which is a very confusing error.
+- **No acceptance suite may assert a global count.** Every suite shares one
+  development database, and the client suites *cannot* clean up after themselves —
+  there is no `deleteBooking`, and an employee may be hard-deleted while its
+  bookings stay behind (FR-7), so each `npm run test:c2` permanently adds a few
+  PENDING bookings and a `booking` row with a null requester. A literal like
+  `assert.equal(list.totalCount, 3)` therefore asserts that the database happens to
+  be empty, and it passes until the first client suite runs. Three server suites
+  assumed otherwise and were rescoped; the rule they now follow is the general one:
+    - `booking-list` scopes every count to its own fixtures' window
+      (`fixtureWindow`, January 2031 — the only bookings the suite places that far
+      out) and replaced `totalCount === 3` for a status-text search with a
+      *membership* claim, because `search` is a LIKE over purpose/room/requester/
+      equipment *and* status, so any row whose purpose contains the word is a correct
+      match. Never write "a search for X returns exactly N rows" for a term that is
+      not unique to the fixtures.
+    - **Membership is not scoping, and this bit too.** The same status-text search was
+      rescoped to a membership claim *without* `fixtureWindow`, on the reasoning that
+      "REJECTED" is a global value so the count is a fact about the database rather
+      than about the query. That is true of the **count** and false of the **page**:
+      `bookings` returns one page, ordered `start_time ASC`, so a membership
+      assertion on an unscoped term asks whether this run's rejected booking is among
+      the oldest N of every rejected booking any suite has ever made. It passed for
+      weeks, then the shared table passed a hundred REJECTED rows and the suite
+      failed on a fact about its own fixtures' age. The fix is `fixtureWindow` on
+      that call like everywhere else — scope the *query*, keep the membership claim.
+      So the rule generalises to: a global value makes a count unscopable, not a page
+      unbounded.
+    - `booking-approval` scenario 12b walks the whole `pendingQueue` page by page:
+      the queue takes no `search` and no `status` argument, so it *is* the global
+      PENDING set, its page 1 in a shared database is an earlier run's rows, and the
+      suite's own fixtures — the newest — are not on it. `totalCount` is compared to
+      `SELECT count(*) … WHERE status = 'PENDING'` rather than to a literal, which
+      also proves the manager's queue is not filtered to their own bookings (FR-50).
+    - `reports` gives both *global* aggregates an explicit range (the fixtures' nine
+      bookings, January–March 2026) and `bookingsPerEmployee` an explicit
+      `limit: 100`, since it is ranked by `totalCount DESC` and a shared database
+      could otherwise push a small fixture requester off the end of the page. The
+      FR-7 group's *shape* (`displayName` = "Deleted user", `email` = null) is
+      asserted on the unranged call and its *count* on the ranged one.
+  When a suite fails on a count, the fix is to scope the query, not to delete the
+  rows and not to relax the assertion — and if the claim genuinely is "the whole
+  table", compare it to a count the database computes.
+
 
 - Client C0, in `apps/client`:
   - `codegen.ts` reads `../server/schema.graphql` — the same file the server
@@ -397,6 +523,17 @@ Scripts outside `npm run dev`:
       root, or `user.clear()`/`user.type()` in a suite act on a `<div>`. A
       boolean filter carries no testid at all: it is reached by its accessible
       name, which is what a screen reader uses too.
+    - `rowCount` is the last total the query told us, *not* whatever the current
+      variables produced. A fourth thing, found by the C2 approval suite, and the
+      only one here that is a real app bug rather than a test problem: the DataGrid
+      clamps the current page into `0 .. ceil(rowCount / pageSize) - 1` whenever
+      `rowCount` changes, and Apollo drops `data` for the duration of a cache miss,
+      so a screen paging to a new page handed the grid `0`, the grid decided there
+      was one page, and it silently yanked the user back to page 1 — the page they
+      asked for never rendered, and no error was ever shown. The ref is seeded from
+      the first render, so a screen with nothing loaded yet still reports 0. Do not
+      "simplify" this back to `rowCount={totalCount}`: no suite paged past page 1
+      before this, which is exactly why it survived C1 and C2's first two halves.
   - `Form` owns the submit rejection. A screen's `onSubmit` awaits a mutation that
     *rejects* when the server refuses the write, and the screen renders that
     refusal from the mutation's own error state (`parseServerError` → inline field
@@ -422,3 +559,293 @@ Scripts outside `npm run dev`:
     `onError` on the hook was measured and changes neither, so no such stub is in
     the code. The allowlist was checked for being non-vacuous: an injected
     rejection fails the suite. Do not widen it.
+  - Client C2 half 1, the booking list and create dialog. The shared components
+    grew what these two screens needed, and three of those additions are reusable
+    contracts rather than booking details:
+    - `DataTable` filters are now `text` | `boolean` | `enum` | `date`. An `enum`
+      filter has `options` and always renders an explicit `All` (an empty
+      `{ field: null }` entry is how the screen says "no filter", so the control
+      has to be able to *show* that state), a `date` filter is a day-bounded pair,
+      and the bar's "Clear filters" clears the **bar only** — the search box is a
+      separate control with its own state, so clearing the search is emptying the
+      search box. That distinction is deliberate, and the C2 suite asserts both
+      halves separately.
+    - `onRowClick` hands the screen the row's `data-id`, and nothing else: the
+      table *reports* a click, it does not route. Treat it as a pointer shortcut
+      over whatever the row's first cell links to — C2's detail page is still a
+      placeholder, so today the click is the only way in, and the real detail
+      screen should carry a real link so the row click stays a shortcut.
+    - `Form` gained `datetime` (converted by `src/lib/datetimes.ts`; the client
+      sends ISO, the server owns all timezone semantics), a repeatable `group`
+      field (keyed rows, per-row `itemFields`, add/remove, and composite field
+      keys like `equipment.0.quantity` so an inline server field error lands under
+      the right input of the right row), and `validateValues` — screen-supplied
+      cross-field validation reported per field, through the same path as a server
+      field error, so `parseServerError` and `validateValues` are one rendering
+      path.
+  - The client rules on the create form (end after start, start not in the past,
+    at least one attendee) are format rules the client can decide on its own; no
+    client code re-implements a *server* business rule such as the room
+    double-booking, and no client string duplicates the server's message. The C2
+    suite proves both halves of that: the three client rules never reach the wire,
+    and the rendered refusal is the server's own `CONFLICT` text
+    ("The selected room is not available for the requested time range"). The date
+    filter is sent day-bounded from `startOfDayIso`/`endOfDayIso` because the
+    server's own booking filter is `start_time >= startDate AND start_time <=
+    endDate` — matching the server's semantics here is why the list date filter and
+    the list the server returns can never disagree.
+  - There is no `deleteBooking`, so every C2 run leaves its fixtures in the shared
+    dev database forever, and page 1 of an unscoped list eventually fills up with
+    older runs' rows. So every *grid* assertion in the C2 suite is scoped to a
+    per-run `TOKEN` (`c2-<run>-…`, in the room, equipment and purpose names), and
+    the only unscoped claims are about the request the screen sent — which is the
+    part the client actually controls. Do not "fix" a failing row assertion by
+    loosening it to page 1; scope it to the token or assert the request instead.
+    Cleanup is limited to what the API allows: delete the fixture employees,
+    retire the room and equipment. A C2 run never enqueues an outbox row (no
+    booking is ever decided in half 1), so there is nothing to clear there.
+  - The detail screen's name rule is a *server contract*, not a client choice, and it
+    is the reason `BookingActor` and `BookingRequester` grew nullable
+    `firstName`/`lastName` (`apps/server/src/modules/booking/booking.resolver.ts`
+    `toBookingActor` + the `requester` resolver) instead of just the server's
+    pre-joined `name`. `BookingDetailDocument` deliberately never selects `name`, so
+    `displayName()` is the only thing on the client that *can* format a person — a
+    second implementation would have nothing to read, which is how the C2 detail
+    suite proves the function is used rather than merely produces the same string.
+    The joined `name` stays for the list, where the server batches one row per booking
+    (NFR-1) and joining per item would be the N+1 the loaders exist to prevent. A
+    deleted requester's *email* is still the server's `DELETED_USER_DISPLAY_NAME`
+    string: there is one server-side fallback for that column, and no client
+    formatter.
+  - `c2.detail.test.tsx` proves `displayName()` is used by *wrapping* it —
+    `vi.mock` with `importOriginal`, delegating to the real function and recording the
+    payload — not by replacing it, and then asserting the two label shapes (a record
+    with no name parts, and one with them) both came out of that one call site. The
+    proof was checked for being non-vacuous by swapping the requester's label in
+    `BookingDetailPage` for a `id === null ? 'Deleted user' : name` cheat and re-running:
+    tests 3 and 5 fail. Do not narrow that assertion to a call *count* — Apollo's
+    `cache-and-network` renders the page more than once, so a count is an artefact of
+    the render count, not of the claim.
+  - Three jsdom facts the detail suite runs into, each one a silent-vacuity trap rather
+    than an error, so all three are now in the test's own helper rather than in each
+    test:
+    - The token is persisted in `localStorage` (as it is in a browser), so a second
+      `renderApp` in the same file starts out as the **previous** identity. The detail
+      suite needs three different people in one run, and without an explicit sign-out
+      the "employee who may not read this booking" *is* the admin and the refusal
+      claim proves nothing. Sign out through the shell's own `sign-out` button.
+    - `renderApp` leaves its container in `document.body` after `unmount()`, and two
+      mounted apps put two `auth-probe` nodes in the document. The harness's `probe()`
+      requires exactly one, so the error is "Found multiple elements" from somewhere
+      that looks unrelated. One render at a time.
+    - `processesAt` needs one pass over `data.booking` for its two lookups
+      (`processedAt`/`processedBy` and `statusHistory`); reading only the first one and
+      stopping leaves `data` non-null but the second lookup undefined, which is
+      "cannot read property of null" three lines later rather than a failed assertion.
+  - The two C2 lessons that cost the most iterations, both now asserted by
+    `c2.harness.tsx`'s `settleTable()` and `lastRequest()`, and both true of any
+    future client suite:
+    - A *cleared* search/filter produces variables the server has already
+      answered, so Apollo serves them from its cache and **no request goes out**.
+      A suite can never wait for one; the observable is the rendered rows, or the
+      *next* request.
+    - A search or filter change only lands after the table's 300 ms debounce, so a
+      suite that clears the search and immediately asserts the next request's
+      variables reads a stale state and reports a phantom filter bug. Wait out the
+      debounce before touching the next control.
+  - MUI query shapes the C2 harness relies on, each found by probing rather than
+    assumed: a `Select`'s accessible name resolves to the combobox `<div>` (click
+    it to open, then pick by option text), a `datetime-local` field's label
+    resolves to the real `<input>`, and `data-testid="field-*"` sits on the
+    TextField wrapper `<div>` — so `setDateTime`/`selectOption` are label-based on
+    purpose. Related: an open modal marks the page behind it `aria-hidden`, so a
+    grid assertion made while the create dialog is open cannot see any rows. Close
+    the dialog first, then look.
+  - C0's route-guard test asserted `placeholder-bookings` because `/bookings` was a
+    placeholder when C0 landed; C2 replaced it with the real screen, so that
+    assertion now names the real screen's `datatable` root. The *claim* is
+    unchanged (a permitted route opens, and it is not the denial page), and
+    `/reports` is still a placeholder, so the guard is still exercised against a
+    route with no screen of its own.
+  - `onRowClick` hands the screen the row's `data-id` and nothing else: the table
+    *reports* a click, it does not route. The detail screen therefore carries a real
+    back link, and the requester's and the room's other bookings are real
+    `/bookings/:id` links, so the row click is a shortcut over links rather than the
+    only way into a booking. `c2.acceptance.test.tsx` still drives the click, because
+    the claim being proved is that the clicked row's own id is what the route carries.
+  - Client C2 half 3, the approval queue. Five things in it are contracts rather
+    than approval details, and four of the five were found by the suite failing:
+    - **The queue is a global PENDING set with no `search` argument and no sort
+      argument**, so "find my row" is a *pagination* problem: the fixtures of a run
+      are the newest bookings, every earlier client run's PENDING bookings are
+      still there, and the DataGrid's footer has only previous/next — no "Go to
+      last page". `showRow()` therefore takes the largest page size, reads the
+      *current page* out of the footer's own `1–100 of 144` label, and steps
+      forward until the row appears or the grid stops moving. The label is the
+      observable, deliberately: the request is not (a page already fetched is
+      answered from Apollo's cache and never reaches the wire) and the next
+      *button* is not either — at the last page it still looks enabled, a click
+      changes nothing, and a "no request" assertion there is a 5-second timeout
+      rather than a failure. The walk is also why a row must be matched on its
+      `data-id`: the booking UUID is not in a row's accessible name, so
+      `getByRole('row', { name: /uuid/ })` is `null` whether the row is there or
+      not.
+    - **`pendingQueue` is ordered `createdAt ASC` and that is FR-50's "requested
+      date/time"**: the order the requests were made, so the longest-waiting one is
+      first. The resolver forces the sort and S8 scenario 12/12b pins it; the
+      screen shows the requested *window* as columns and never re-sorts a page of a
+      server-paginated set. Do not "fix" the screen into sorting by start time.
+    - **A session that can reach the queue is not necessarily a session that can
+      read it.** `BookingResolver.requester` calls `readScope` for a request's
+      "other recent bookings" *even when the client selects only the name*, so a
+      `booking:approve`-only session is refused on that field and the whole
+      `pendingQueue` query fails with it. The suite's approver-only role is
+      therefore approve + `booking:read:all`, and the reason is a comment there:
+      an approver who cannot read bookings cannot see the queue at all.
+    - **A refusal has to render where the user is looking.** FR-56's self-decision
+      comes back *after* the confirm dialog is open, and an open MUI modal marks
+      everything behind it `aria-hidden`, so a banner on the page is in the DOM and
+      unreachable. `ConfirmDialog` grew an `error` prop for exactly this; the suite
+      asserts the alert's text is the server's own message, which it reads off the
+      wire for the same booking and the same session.
+    - The suite's own fixtures are the reason its cleanup is not the other suites'
+      cleanup: approving and rejecting is most of what it does, and the outbox is
+      addressed rather than linked, so `c2.harness.tsx` grew `clearOutboxFor()`,
+      one fixed `DELETE … WHERE to_email = ANY($1)` over its own `pg` connection,
+      run *before* the employees are deleted (the address is the only handle). It
+      asserts `>= 4` deleted rows so a cleanup that quietly matched nothing cannot
+      pass. `envValue()` in the same file now strips one layer of quotes the way
+      dotenv does — `DB_PASSWORD="…"` in `.env` authenticated as a password
+      *including* the quote marks, against a server the same file had just booted.
+    - The C2 allowlist for unhandled rejections is the C1 one, and it had the same
+      latent hole: the same Apollo teardown arrives as an `Error` *or* as the
+      `DOMException` jsdom's `AbortController` rejects with, and `DOMException` is
+      not an `instanceof Error` there, so C1 failed roughly one run in three on a
+      teardown it is meant to tolerate. The check now duck-types `name` +
+      `message` instead. Re-measured for non-vacuity after the change: an injected
+      `Error`, an injected string, and an object *named* `AbortError` with the
+      wrong message all still fail the suite, while a DOMException carrying
+      abort's own message is tolerated. It is still exactly two tolerated events.
+    - `openQueueAs()` waits for the app to settle on *either* the grid or the
+      guard's refusal, because which one you get is decided by the session rather
+      than by the route — a helper that waited for the grid turned test 5's own
+      claim (a session with no `booking:approve` is refused the route) into a
+      timeout.
+  - Client C2 half 4, the availability panel. It is a *view of the server's
+    answer*, and the load-bearing decision is that it computes nothing: no
+    overlap rule, no "this looks free", no subtraction of one booking from
+    another. `roomAvailability` returns the overlapping bookings and an empty list
+    is rendered as the server's empty answer, and `equipmentAvailability` returns
+    the two numbers that are printed. A client rule would be a weaker second copy
+    of FR-35's "committed" definition, evaluated against a snapshot another
+    requester can invalidate before the create lands — and it would sit *beside*
+    the server's own `CONFLICT` in the same dialog, so the user would be told two
+    different things about the same slot. The one comparison the panel does make
+    is about the *draft*, not the world (the server says N are left, the draft
+    wants M → a "fewer than requested" chip), and it never blocks the submit.
+    Three things about how it is wired:
+    - **The panel reads the form's draft, it does not copy it.** `Form` grew one
+      optional prop, `renderExtra: (values) => ReactNode`, rendered under the
+      fields with the values as they stand. That is the same shape as
+      `validateValues` (a screen-supplied function the form calls), and it is why
+      the create dialog can show live availability without a second set of form
+      state. It must return an *element*: the returned component owns its hooks,
+      so it is a normal child, not a callback running another component's hooks
+      inside the form's render.
+    - **`optionalNumberValue()` exists for drafts.** `numberValue()` is the
+      *submit* reader and throws on an empty field, which is right there (the form
+      has already refused to submit) and wrong for a draft being watched: while the
+      user types, the value is whatever the keystrokes have produced, and a blank
+      or half-typed line is 0 rather than an exception. Do not "simplify" the
+      panel by using `numberValue`.
+    - **The window is debounced, and while it settles the panel answers nothing.**
+      `AVAILABILITY_DEBOUNCE_MS` is 300 ms — the same pause `DataTable` puts on its
+      search box — because `datetime-local` is a text field: typing "2026-03-04"
+      produces a run of values that are each individually parseable, so without a
+      pause a three-line draft costs a room query *and* three equipment queries per
+      keystroke. Two things are load-bearing and both were got wrong first:
+      the debounce is applied to the draft's *primitives*, not to the window object,
+      because `useDebouncedValue` keys its timer on identity and a fresh object every
+      render would restart its own timer forever; and while the debounce is pending
+      the panel renders a progress bar and **nothing else** — the querying
+      components are unmounted — because the alternative, keeping the last answer on
+      screen, pairs one window's rows with another window's label, and the panel
+      shows the *time* window, not the room, so a room change would leave the
+      previous room's bookings under the new times. `pending` is therefore
+      `questionKey(roomId, question) !== questionKey(settledRoomId, settled)`, with
+      the room in the key even though it is not in `AvailabilityWindow`: a room
+      change with the times untouched is a different question and must not read as
+      settled.
+    - **"Which request went out" is not an observable for this, and that is a
+      property of the harness.** `c2.harness.tsx`'s recording fetch pushes to
+      `recorded` *after* `await realFetch(...)` resolves, so a query the panel
+      withdraws is cancelled and never recorded — which is exactly the request the
+      debounce prevents. The claim is therefore asserted on the seam that actually
+      governs it: `availability-pending` is present and `availability-room` is
+      absent while the draft is moving, so the components that would issue those
+      queries are demonstrably not in the tree. Asserting on the request log
+      instead passes with `AVAILABILITY_DEBOUNCE_MS = 0` and proves nothing; it was
+      measured, and it passed, which is why the test looks the way it does.
+    - **Three refusal states, three different sentences.** `windowQuestion` returns
+      `incomplete` / `unparseable` / `backwards` rather than one `null`, because
+      "pick a room, a start and an end" is wrong advice once all three are filled in
+      and the end is merely before the start. The end-not-after-start rule still
+      belongs to the form's `validateValues`; this only decides when the *question*
+      is worth asking.
+    - **Per-room and per-item, permission-gated.** `room:read` and
+      `equipment:read` gate the two queries separately, so each is `skip`ped for a
+      session that lacks it (NFR-5 — the server would refuse it anyway; skipping
+      is the courtesy, not the control). There is one query per equipment line
+      because `equipmentAvailability` takes one item per call; that is the
+      endpoint's shape, not an N+1 the screen chose, and there is no batched form
+      of the query to call.
+  - Client C2 half 5, the lifecycle and the reuse proof.
+    - **FR-56 catches fixtures, not just users.** The availability suite's
+      blocking booking could not be created *and* approved by the admin: the admin
+      holds `booking:approve`, so the server refused its own approval with "A
+      manager cannot approve or reject their own booking request". The fixture now
+      has the requester create it and the admin approve it, which is also the
+      arrangement FR-56 describes. A blocking fixture must also be APPROVED, not
+      merely PENDING (FR-35), or the room is free and the availability assertions
+      are measuring nothing.
+    - **The page-walk helpers moved into `c2.harness.tsx`.** `showRow()`,
+      `rowOnThisPage()`, `displayedPage()`, `settleGrid()`, `pageSizeValue()`,
+      `PAGE_SIZE` and `signOutIfSignedIn()` were in `c2.approvals.test.tsx` and are
+      now shared, because the lifecycle test walks the queue too and a second copy
+      of a 100-line walk is exactly the duplication these suites exist to prevent.
+    - **`c2.reuse.test.ts` is static and server-free, on purpose.** C1's method was
+      a runtime check: mount the screen, read `data-component="DataTable"` off the
+      mounted component. That half still exists for the bookings screens (test 3 of
+      `c2.acceptance.test.tsx`), and it has a blind spot — a *second* copy of a
+      component sitting unrendered in a file still passes it. So the static half
+      states the whole list rather than the files someone remembered to check:
+      the only `@mui/x-data-grid` importers are the shared `DataTable` and the
+      theme; the only files rendering a form element (`<form>` *or* MUI's
+      `component="form"`) are the shared `Form` and the login page, which is named
+      as the one sanctioned exception (C0's two-field sign-in, predating the
+      schema-driven `Form`); and there is exactly one `displayName()` definition,
+      in `lib/displayName`. Non-vacuity was measured: adding a private
+      `@mui/x-data-grid` import to `ApprovalsPage` fails check 1 by name.
+    - **Two traps in the static checks, both found by them failing.** The detail
+      screen's own comment quotes the string `Deleted user` while explaining why
+      the client must not hardcode it, so the literal check reads the file through
+      a `code()` helper that strips comments (a check that matched the comment
+      would fail on the very thing that documents the rule). And MUI marks a
+      required field's label with an asterisk, so `getByLabelText(/^room$/i)` does
+      not match "Room *" — every label regex in these suites is anchored at the
+      start only (`/^room/i`), which is also what `c2.acceptance.test.tsx` does.
+  - `vitest.c2.config.ts` sets **`fileParallelism: false`**, and the reason is
+    boot contention, not the timeout. The C2 files each spawn a real `tsx` server
+    against *one* development database; three at once compiles the server and
+    initialises TypeORM simultaneously, and roughly one run in five had a file's
+    `beforeAll` miss the harness's health wait, which Vitest reports as that file
+    being *skipped* — `11 passed | 5 skipped (16)` with no failing assertion, so
+    it reads like a pass and is not one. Serialising the files removed most of it
+    (1 failure in the 24 runs after the change, against ~2 in 34 before) but did
+    not eliminate it, and the one failure that got through was never captured with
+    its output, so the residual cause is still unknown. Two things make the next
+    one diagnosable rather than another shrug: `waitForHealth` already appends the
+    child server's entire stdout+stderr to its error, and the file-level verdict
+    identifies the file (5 skipped = the two 5-test files, `c2.acceptance` or
+    `c2.detail`). The health timeout is deliberately untouched at 90 s — the
+    contention was the cause, and a longer budget would only hide it.

@@ -44,12 +44,22 @@ export const INITIAL_TABLE_STATE: TableState = {
 /** The server clamps `pageSize` to 100 (NFR-2), so the UI offers nothing more. */
 export const TABLE_PAGE_SIZES: readonly number[] = [10, 20, 50, 100]
 
+/**
+ * A filter control's shape. `enum` and `date` exist so a screen never has to
+ * round-trip a *typed* value through a free-text box: a status is chosen from
+ * the enum's own values (a typo would be a server-side validation error) and a
+ * date is picked from a calendar (a `YYYY-MM-DD` string is what `<input
+ * type="date">` speaks). Which values a control offers is the screen's
+ * declaration, so this stays as entity-free as `string`/`number`/`boolean`.
+ */
 export interface ColumnFilter {
   /** The *API* argument this control feeds — e.g. `minCapacity`, `activeOnly`. */
   key: string
-  type: 'string' | 'number' | 'boolean'
+  type: 'string' | 'number' | 'boolean' | 'date' | 'enum'
   label: string
   placeholder?: string
+  /** `enum` only: the closed set of values this argument accepts. */
+  options?: readonly { value: string; label: string }[]
 }
 
 export interface DataTableColumn<Row extends GridValidRowModel> {
@@ -83,6 +93,12 @@ export interface DataTableProps<Row extends GridValidRowModel> {
   searchPlaceholder?: string
   searchDebounceMs?: number
   getRowId?: (row: Row) => string
+  /**
+   * Called when a row is activated (click). Generic like everything else here:
+   * the screen decides what activation means — for a booking list that is
+   * "navigate to this booking's detail route".
+   */
+  onRowClick?: (row: Row) => void
   /** Per-row controls (edit/delete). Omitted ⇒ no actions column at all. */
   actions?: (row: Row) => ReactNode
   actionsHeader?: string

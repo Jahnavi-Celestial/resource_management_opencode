@@ -284,16 +284,28 @@ async function main(): Promise<void> {
     // Alice: B1 APPROVED, B3 REJECTED, B4 APPROVED, B9 APPROVED = 4 (3 approved).
     // Bob:   B2 COMPLETED, B5 CANCELLED, B6 APPROVED, B7 PENDING   = 4.
     // Carol: B8 APPROVED, requester row deleted (FR-7)               = 1.
+    // `limit: 100` (MAX_PAGE_SIZE) rather than the default, because the report is
+    // deliberately *global* — it must not filter to the caller's own bookings — and the
+    // rows are ranked by totalCount DESC. With the default limit a shared database
+    // could push these small fixture requesters off the end of the page, and then the
+    // suite would be asserting on a truncation rather than on the breakdown.
     const { result: employeeRows } = await capturedFor(
       'FR-67 bookingsPerEmployee',
-      () => service.bookingsPerEmployee(manager, null, null),
+      () => service.bookingsPerEmployee(manager, null, 100),
       /COUNT\s*\([^)]*\)\s*FILTER/i,
     )
     console.log(`\nFR-67 rows: ${JSON.stringify(employeeRows)}`)
-    assert.equal(employeeRows.length, 3)
+    // No assertion on the row *count*: every requester the client suites left behind
+    // is a legitimate row in a global report (there is no `deleteBooking`, so their
+    // bookings cannot be cleaned up). What this suite owns is that its three
+    // groupings are present and correct, and that the order *among them* is the
+    // documented one.
     const aliceRow = employeeRows.find((row) => row.employeeId === alice.id)!
     const bobRow = employeeRows.find((row) => row.employeeId === bob.id)!
     const deletedRow = employeeRows.find((row) => row.employeeId === null)!
+    assert.ok(aliceRow, 'FR-67 must return a row for the Alice fixture requester')
+    assert.ok(bobRow, 'FR-67 must return a row for the Bob fixture requester')
+    assert.ok(deletedRow, 'FR-67 must return the FR-7 group whose requester was deleted')
     assert.deepEqual(
       {
         totalCount: aliceRow.totalCount,
@@ -318,18 +330,33 @@ async function main(): Promise<void> {
       { totalCount: 4, pendingCount: 1, approvedCount: 1, rejectedCount: 0, cancelledCount: 1, completedCount: 1 },
       'FR-67 Bob breakdown must be 4 total / 1 approved / 1 pending / 1 cancelled / 1 completed',
     )
-    assert.equal(deletedRow.totalCount, 1)
+    // Only the *shape* of the NULL group is asserted here, and the shape is the point
+    // of FR-7: one row for every booking whose requester no longer exists, labelled with
+    // the same DELETED_USER_DISPLAY_NAME the loaders use, with no email. Its count is
+    // a global aggregate, and the client suites leave orphaned bookings behind on
+    // purpose (no `deleteBooking`), so the count is asserted on the ranged call below.
     assert.equal(deletedRow.displayName, 'Deleted user', 'FR-7: a deleted requester must render as "Deleted user"')
     assert.equal(deletedRow.email, null)
+    assert.ok(deletedRow.totalCount >= 1, 'The FR-7 group must count at least the suite\'s own B8')
+    // The ordering claim, read off the three rows this suite created rather than off
+    // the whole page: Alice (4) before Bob (4) is the name tie-break, and Bob before
+    // the NULL group because the tie-break is name ASC and the NULL group sorts last.
     assert.deepEqual(
-      employeeRows.map((row) => row.totalCount),
-      [4, 4, 1],
-      'FR-67 must order by total DESC, then by name ASC with the NULL group last',
+      employeeRows
+        .filter((row) => row.employeeId === alice.id || row.employeeId === bob.id)
+        .map((row) => row.totalCount),
+      [4, 4],
+      'FR-67 must order equal totals by name ASC',
     )
-    const ranged = await service.bookingsPerEmployee(manager, range(RANGE_FROM, RANGE_TO), null)
+    const ranged = await service.bookingsPerEmployee(manager, range(RANGE_FROM, RANGE_TO), 100)
     const rangedBob = ranged.find((row) => row.employeeId === bob.id)!
     assert.equal(rangedBob.totalCount, 3, 'FR-67 range must drop B6, which starts after the range')
     assert.equal(ranged.find((row) => row.employeeId === alice.id)!.totalCount, 4, 'FR-67 range keeps the straddling B9')
+    assert.equal(
+      ranged.find((row) => row.employeeId === null)!.totalCount,
+      1,
+      'FR-7 group inside the range is exactly the suite\'s orphaned B8',
+    )
     console.log('PASS FR-67 bookingsPerEmployee exact per-status breakdown for 2 employees + "Deleted user" group')
 
     // ----------------------------------------------- FR-68 equipment quantity-hours
@@ -372,9 +399,13 @@ async function main(): Promise<void> {
     // created:  Jan = B1, B3 (2) | Feb = B9 (1) | Mar = B2, B4, B5, B6, B7, B8 (6)
     // approved: Jan = B1 | Feb = B9 | Mar = B4, B6, B8   (B2's COMPLETE is not an approval)
     // rejected: Jan = B3   cancelled: Mar = B5
+    // The range is the fixtures' own nine bookings: January to March 2026. Passed
+    // explicitly rather than as `null`, because with no range the statement is a global
+    // aggregate over every booking in the shared database and the hand-computed month
+    // buckets would have to include whatever earlier runs left behind.
     const { result: monthlyRows } = await capturedFor(
       'FR-69 monthlyBookingStatistics',
-      () => service.monthlyBookingStatistics(manager, null, null),
+      () => service.monthlyBookingStatistics(manager, range(utc('2026-01-01T00:00:00'), utc('2026-04-01T00:00:00')), null),
       /COUNT\s*\([^)]*\)\s*FILTER|SUM\s*\(/i,
     )
     console.log(`\nFR-69 rows: ${JSON.stringify(monthlyRows)}`)
@@ -454,6 +485,13 @@ async function main(): Promise<void> {
     const errorMessage = (result: ExecutionResult): string => formattedError(result).message
 
     const variables = { range: { from: RANGE_FROM.toISOString(), to: RANGE_TO.toISOString() } }
+    // The fixtures' own nine bookings run from January to March 2026, and both
+    // `monthlyBookingStatistics` and `bookingsPerEmployee` are *global* aggregates when
+    // they are given no range. The figures below are therefore asserted inside that
+    // window: the point of this block is that the GraphQL layer returns exactly what
+    // the service returned, and an unranged call would also be asserting that no other
+    // suite has ever written a booking.
+    const fixtureWindow = { from: utc('2026-01-01T00:00:00').toISOString(), to: utc('2026-04-01T00:00:00').toISOString() }
 
     const gqlRooms = requireData<{ mostBookedRooms: Array<{ bookingCount: number }> }>(
       await runQuery(ROOMS_QUERY, { range: variables.range }, permitted),
@@ -464,15 +502,18 @@ async function main(): Promise<void> {
     )
     assert.deepEqual(gqlUsage.equipmentUsage.map((row) => row.totalQuantityHours), [8, 2])
     const gqlMonthly = requireData<{ monthlyBookingStatistics: Array<{ month: string; created: number }> }>(
-      await runQuery(MONTHLY_QUERY, { range: null }, permitted),
+      await runQuery(MONTHLY_QUERY, { range: fixtureWindow }, permitted),
     )
     assert.deepEqual(
       gqlMonthly.monthlyBookingStatistics.map((row) => `${row.month}:${row.created}`),
       ['2026-01:2', '2026-02:1', '2026-03:6'],
     )
     const gqlEmployee = requireData<{ bookingsPerEmployee: Array<{ totalCount: number; displayName: string }> }>(
-      await runQuery(EMPLOYEE_QUERY, { range: null, limit: 5 }, permitted),
+      await runQuery(EMPLOYEE_QUERY, { range: fixtureWindow, limit: 100 }, permitted),
     )
+    // Alice and Bob are tied on 4 inside this window, so this row order is the whole
+    // ordering contract at once: totalCount DESC, the tie broken by name ASC, and the
+    // single-booking FR-7 group last.
     assert.deepEqual(
       gqlEmployee.bookingsPerEmployee.map((row) => `${row.displayName}:${row.totalCount}`),
       ['Alice Report:4', 'Bob Report:4', 'Deleted user:1'],

@@ -3,6 +3,7 @@ import Box from '@mui/material/Box'
 import Checkbox from '@mui/material/Checkbox'
 import FormControlLabel from '@mui/material/FormControlLabel'
 import LinearProgress from '@mui/material/LinearProgress'
+import MenuItem from '@mui/material/MenuItem'
 import Stack from '@mui/material/Stack'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
@@ -34,6 +35,13 @@ import {
 
 const ACTIONS_FIELD = '__actions'
 
+/**
+ * The empty choice of an `enum` filter. Every filter control here is optional
+ * (the server's own default applies when it is absent), so an enum offers this
+ * first, exactly like the select in `Form` renders an "—" placeholder.
+ */
+const ANY_FILTER_LABEL = 'All'
+
 function defaultGetRowId<Row>(row: Row): string {
   const id = (row as { id?: unknown }).id
   return typeof id === 'string' || typeof id === 'number' ? String(id) : ''
@@ -48,6 +56,9 @@ function parseFilterValue(filter: ColumnFilter, raw: string): FilterValue | null
     const parsed = Number(trimmed)
     return Number.isFinite(parsed) ? parsed : null
   }
+  // `date` and `string` are both carried as the string the control already
+  // holds (`YYYY-MM-DD` for a date input); the screen turns it into whatever
+  // its endpoint's argument type is.
   return trimmed
 }
 
@@ -62,6 +73,7 @@ export function DataTable<Row extends GridValidRowModel>({
   searchPlaceholder = 'Search',
   searchDebounceMs = 300,
   getRowId = defaultGetRowId,
+  onRowClick,
   actions,
   actionsHeader = 'Actions',
   toolbar,
@@ -82,6 +94,21 @@ export function DataTable<Row extends GridValidRowModel>({
   // mistakes the user's first character (still in the debounce, not yet in
   // `state`) for an external reset and throws it away.
   const agreedSearch = useRef(state.search)
+
+  // `rowCount` is how the DataGrid knows how many pages exist, and it clamps the
+  // current page into `0 .. ceil(rowCount / pageSize) - 1` when that number
+  // changes (`handleRowCountChange` in @mui/x-data-grid). A page the query has not
+  // answered yet has no total to report — Apollo drops `data` for the duration, so
+  // the screen hands over 0 — and a 0 there means "one page", so a manager on page 3
+  // is silently yanked back to page 1 and the page they asked for never appears.
+  // The last total we were told therefore stands in until the new page's own
+  // answer arrives. It is seeded from the first render, so a screen that has
+  // genuinely not loaded yet still reports 0 and the grid starts on page 1.
+  const knownTotal = useRef(totalCount)
+  if (!loading || totalCount > 0) {
+    knownTotal.current = totalCount
+  }
+  const rowCount = loading && totalCount === 0 ? knownTotal.current : totalCount
 
   const filters = useMemo(() => columns.flatMap((column) => column.filters ?? []), [columns])
   const [filterDrafts, setFilterDrafts] = useState<Readonly<Record<string, string>>>({})
@@ -116,11 +143,12 @@ export function DataTable<Row extends GridValidRowModel>({
     const next: Record<string, FilterValue> = { ...stateRef.current.filters }
     let changed = false
     for (const filter of filters) {
-      // A boolean filter is applied the instant it is toggled, so it has no
-      // draft to reconcile. Reconciling it against its (always empty) draft
-      // would delete the value the user just set the moment any *other* filter
-      // is typed — a silent, order-dependent loss of a filter.
-      if (filter.type === 'boolean') {
+      // A `boolean` filter is applied the instant it is toggled and an `enum`
+      // filter the instant a value is chosen, so neither has a draft to
+      // reconcile. Reconciling one against its (always empty) draft would
+      // delete the value the user just set the moment any *other* filter is
+      // typed — a silent, order-dependent loss of a filter.
+      if (filter.type === 'boolean' || filter.type === 'enum') {
         continue
       }
       const value = parseFilterValue(filter, debouncedDrafts[filter.key] ?? '')
@@ -259,11 +287,41 @@ export function DataTable<Row extends GridValidRowModel>({
                 }
                 label={filter.label}
               />
+            ) : filter.type === 'enum' ? (
+              // Applied on change, for the same reason as the checkbox: the
+              // control holds a closed set, so there is nothing to debounce.
+              // No testid either — the label names it, for a screen reader and a
+              // test alike.
+              <TextField
+                key={filter.key}
+                size="small"
+                select
+                label={filter.label}
+                value={String(state.filters[filter.key] ?? '')}
+                onChange={(event) => {
+                  const value = String(event.target.value)
+                  const next = { ...stateRef.current.filters }
+                  if (value === '') {
+                    delete next[filter.key]
+                  } else {
+                    next[filter.key] = value
+                  }
+                  changeRef.current({ ...stateRef.current, page: 0, filters: next })
+                }}
+                sx={{ width: 160 }}
+              >
+                <MenuItem value="">{ANY_FILTER_LABEL}</MenuItem>
+                {(filter.options ?? []).map((option) => (
+                  <MenuItem key={option.value} value={option.value}>
+                    {option.label}
+                  </MenuItem>
+                ))}
+              </TextField>
             ) : (
               <TextField
                 key={filter.key}
                 size="small"
-                type={filter.type === 'number' ? 'number' : 'text'}
+                type={filter.type === 'number' ? 'number' : filter.type === 'date' ? 'date' : 'text'}
                 label={filter.label}
                 placeholder={filter.placeholder}
                 slotProps={{ htmlInput: { 'data-testid': `filter-${filter.key}` } }}
@@ -293,13 +351,19 @@ export function DataTable<Row extends GridValidRowModel>({
           columns={gridColumns}
           getRowId={getRowId}
           autoHeight
+          // Row activation is the screen's decision (navigate, expand, …), so it
+          // is a prop like `actions` — the table itself has no idea what a row
+          // is. Selection is off because a checkbox column nobody asked for
+          // would be a way to select rows nobody can then act on.
+          onRowClick={onRowClick === undefined ? undefined : (params) => onRowClick(params.row)}
+          disableRowSelectionOnClick
           // NFR-7: the grid never sorts, filters or paginates a local copy.
           paginationMode="server"
           sortingMode="server"
           filterMode="server"
           disableColumnFilter
           disableColumnMenu
-          rowCount={totalCount}
+          rowCount={rowCount}
           loading={loading}
           pageSizeOptions={[...TABLE_PAGE_SIZES]}
           paginationModel={{ page: state.page, pageSize: state.pageSize }}

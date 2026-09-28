@@ -13,14 +13,17 @@ import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 import Alert from '@mui/material/Alert'
 import type { FieldErrors, FormField, FormProps, FormValue, FormValues } from './types'
+import { groupKey, groupRows, initialGroupValues, removeGroupRow } from './groups'
 
 /**
  * The one form component. It is driven entirely by a field schema, so Employee,
- * Role, Room and Equipment (and C2's booking form) share this implementation
- * rather than four near-copies.
+ * Role, Room, Equipment and a booking (with its repeating equipment lines) share
+ * this implementation rather than five near-copies.
  *
- * Two error sources land in the same place, deliberately:
+ * Three error sources land in the same place, deliberately:
  *   - client-side checks, so an empty required field does not cost a round trip;
+ *   - the screen's cross-field rules (`validateValues`), because "end after
+ *     start" belongs to no single input;
  *   - the server's `extensions.fieldErrors` from the S3 formatter, passed in as
  *     `errors` (NFR-6). A duplicate email arrives as `{ email: ['Email is
  *     already in use'] }` and is rendered under the email input, wired to it as
@@ -33,9 +36,16 @@ import type { FieldErrors, FormField, FormProps, FormValue, FormValues } from '.
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
+function isGroup(field: FormField): boolean {
+  return field.type === 'group'
+}
+
 function initialValues(fields: readonly FormField[], provided: FormValues | undefined): FormValues {
   const values: FormValues = {}
   for (const field of fields) {
+    if (isGroup(field)) {
+      continue
+    }
     const given = provided?.[field.name]
     if (given !== undefined) {
       values[field.name] = given
@@ -45,7 +55,55 @@ function initialValues(fields: readonly FormField[], provided: FormValues | unde
       values[field.name] = ''
     }
   }
+  // A group's rows are rendered from `rowCounts`, so their initial values are
+  // addressed by composite key; `initialValues` above only covers flat fields.
+  for (const field of fields) {
+    if (!isGroup(field) || field.itemFields === undefined) {
+      continue
+    }
+    const count = rowCountFor(field, provided)
+    for (let index = 0; index < count; index += 1) {
+      Object.assign(values, initialGroupValues(field.name, index, field.itemFields))
+    }
+  }
   return values
+}
+
+/** How many rows a group starts with: `minItems`, or one row per given value. */
+function rowCountFor(field: FormField, provided: FormValues | undefined): number {
+  if (provided === undefined) {
+    return field.minItems ?? 0
+  }
+  const given = groupRows(provided, field.name).length
+  return given > 0 ? given : (field.minItems ?? 0)
+}
+
+function addMessages(target: FieldErrors, name: string, messages: readonly string[]): void {
+  const existing = target[name] ?? []
+  const merged = [...existing]
+  for (const message of messages) {
+    if (!merged.includes(message)) {
+      merged.push(message)
+    }
+  }
+  target[name] = merged
+}
+
+function mergeErrors(base: FieldErrors, extra: FieldErrors): FieldErrors {
+  const out: FieldErrors = { ...base }
+  for (const [name, messages] of Object.entries(extra)) {
+    addMessages(out, name, messages)
+  }
+  return out
+}
+
+/** Re-keys a field's messages under a group row, so a row error is a row error. */
+function prefixErrors(errors: FieldErrors, group: string, index: number): FieldErrors {
+  const out: FieldErrors = {}
+  for (const [name, messages] of Object.entries(errors)) {
+    out[groupKey(group, index, name)] = messages
+  }
+  return out
 }
 
 function validate(fields: readonly FormField[], values: FormValues): FieldErrors {
@@ -57,6 +115,9 @@ function validate(fields: readonly FormField[], values: FormValues): FieldErrors
     }
   }
   for (const field of fields) {
+    if (isGroup(field)) {
+      continue
+    }
     const value = values[field.name]
     if (field.type === 'checkbox') {
       if (field.required === true && value !== true) {
@@ -93,6 +154,48 @@ function validate(fields: readonly FormField[], values: FormValues): FieldErrors
         }
       }
     }
+    // `datetime` needs no rule of its own here: the value is either empty or a
+    // complete `YYYY-MM-DDTHH:mm` the browser itself produced, and every rule
+    // that needs to *compare* it (after another time, not in the past) is
+    // cross-field, so the screen supplies it through `validateValues`.
+  }
+  return errors
+}
+
+/**
+ * Rows of every group field, validated row by row with the same per-field rules.
+ * An entirely blank row is not an error — a screen can add one and change its
+ * mind — but a half-filled one is, because submitting it would send nonsense.
+ */
+function validateGroups(
+  fields: readonly FormField[],
+  values: FormValues,
+  rowCounts: Readonly<Record<string, number>>,
+): FieldErrors {
+  let errors: FieldErrors = {}
+  for (const field of fields) {
+    if (!isGroup(field) || field.itemFields === undefined) {
+      continue
+    }
+    const count = rowCounts[field.name] ?? 0
+    if (field.required === true && count === 0) {
+      errors = mergeErrors(errors, { [field.name]: [`${field.label} is required`] })
+      continue
+    }
+    const rows = groupRows(values, field.name)
+    for (let index = 0; index < count; index += 1) {
+      const row = rows[index] ?? {}
+      const filled = Object.values(row).some(
+        (value) => value !== null && value !== undefined && value !== '',
+      )
+      if (!filled) {
+        continue
+      }
+      const rowErrors = validate(field.itemFields, row)
+      if (Object.keys(rowErrors).length > 0) {
+        errors = mergeErrors(errors, prefixErrors(rowErrors, field.name, index))
+      }
+    }
   }
   return errors
 }
@@ -107,6 +210,19 @@ function validate(fields: readonly FormField[], values: FormValues): FieldErrors
 function submitValues(fields: readonly FormField[], values: FormValues): FormValues {
   const out: FormValues = {}
   for (const field of fields) {
+    if (isGroup(field)) {
+      // Rows are re-keyed exactly as they are stored, so the screen's
+      // `listValue()` reads back what was typed, coercion included.
+      const rows = groupRows(values, field.name)
+      for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index] ?? {}
+        const coerced = submitValues(field.itemFields ?? [], row)
+        for (const [name, value] of Object.entries(coerced)) {
+          out[groupKey(field.name, index, name)] = value
+        }
+      }
+      continue
+    }
     const value = values[field.name]
     if (field.type === 'checkbox') {
       out[field.name] = value === true
@@ -140,14 +256,58 @@ export function Form({
   cancelLabel = 'Cancel',
   submitting = false,
   presentation = 'dialog',
+  validateValues,
+  renderExtra,
   onSubmit,
   onCancel,
 }: FormProps): React.ReactElement {
   const [values, setValues] = useState<FormValues>(() => initialValues(fields, provided))
   const [localErrors, setLocalErrors] = useState<FieldErrors>({})
+  // How many rows each `group` field currently has. Row count is component state
+  // rather than a value because it is not something the user typed: it is the
+  // number of "Add" presses so far.
+  const [rowCounts, setRowCounts] = useState<Readonly<Record<string, number>>>(() => {
+    const counts: Record<string, number> = {}
+    for (const field of fields) {
+      if (isGroup(field)) {
+        counts[field.name] = rowCountFor(field, provided)
+      }
+    }
+    return counts
+  })
 
   const setValue = (name: string, value: FormValue): void => {
     setValues((previous) => ({ ...previous, [name]: value }))
+  }
+
+  const addRow = (field: FormField): void => {
+    if (field.itemFields === undefined) {
+      return
+    }
+    const index = rowCounts[field.name] ?? 0
+    const limit = field.maxItems
+    if (limit !== undefined && index >= limit) {
+      return
+    }
+    const itemFields = field.itemFields ?? []
+    setValues((previous) => ({ ...previous, ...initialGroupValues(field.name, index, itemFields) }))
+    setRowCounts((previous) => ({ ...previous, [field.name]: index + 1 }))
+  }
+
+  const removeRow = (field: FormField, index: number): void => {
+    setValues((previous) => removeGroupRow(previous, field.name, index))
+    setRowCounts((previous) => ({ ...previous, [field.name]: Math.max(0, (previous[field.name] ?? 0) - 1) }))
+    // A removed row's messages are stale; leaving them would show an error under
+    // a row that no longer exists (or, worse, under the row that shifted up).
+    setLocalErrors((previous) => {
+      const next: FieldErrors = {}
+      for (const [key, messages] of Object.entries(previous)) {
+        if (!key.startsWith(`${field.name}.`)) {
+          next[key] = messages
+        }
+      }
+      return next
+    })
   }
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
@@ -155,7 +315,10 @@ export function Form({
     if (submitting) {
       return
     }
-    const nextLocal = validate(fields, values)
+    const nextLocal = mergeErrors(
+      mergeErrors(validate(fields, values), validateGroups(fields, values, rowCounts)),
+      validateValues === undefined ? {} : validateValues(values),
+    )
     setLocalErrors(nextLocal)
     if (Object.keys(nextLocal).length > 0) {
       return
@@ -169,8 +332,14 @@ export function Form({
     void Promise.resolve(onSubmit(submitValues(fields, values))).catch(() => undefined)
   }
 
-  const renderField = (field: FormField): ReactNode => {
-    const name = field.name
+  /**
+   * `keyName` is where this field's value lives. It equals `field.name` for a
+   * top-level field, and the composite `group.index.subName` for a row of a
+   * `group` — which is also how the server keys a field error that belongs to a
+   * nested input, so one error lookup serves both.
+   */
+  const renderField = (field: FormField, keyName: string = field.name): ReactNode => {
+    const name = keyName
     const messages = messagesFor(name, localErrors, errors)
     const invalid = messages.length > 0
     const value = values[name] ?? ''
@@ -262,7 +431,9 @@ export function Form({
           ? 'password'
           : field.type === 'number'
             ? 'number'
-            : 'text'
+            : field.type === 'datetime'
+              ? 'datetime-local'
+              : 'text'
 
     return (
       <Box key={name} data-field={name} sx={{ mb: 2 }}>
@@ -287,6 +458,81 @@ export function Form({
     )
   }
 
+  /**
+   * A repeatable list of sub-fields. Its rows sit side by side so the list reads
+   * as a list, and each row carries its own "Remove": removing a row renumbers
+   * the ones below it (see `removeGroupRow`), so a removed row's values cannot
+   * reappear under a different index.
+   */
+  const renderGroup = (field: FormField): ReactNode => {
+    const itemFields = field.itemFields ?? []
+    const count = rowCounts[field.name] ?? 0
+    const rows = groupRows(values, field.name)
+    const groupMessages = messagesFor(field.name, localErrors, errors)
+    const canAdd = field.maxItems === undefined || count < field.maxItems
+    const addDisabled = submitting || field.disabled === true
+
+    return (
+      <Box key={field.name} data-field={field.name} data-testid={`group-${field.name}`} sx={{ mb: 2 }}>
+        <Typography variant="subtitle2" component="h3" sx={{ mb: 1 }}>
+          {field.label}
+        </Typography>
+        {groupMessages.length > 0 && (
+          <Typography
+            variant="caption"
+            color="error"
+            component="p"
+            data-testid={`field-error-${field.name}`}
+            sx={{ display: 'block', mb: 1 }}
+          >
+            {groupMessages.join(' ')}
+          </Typography>
+        )}
+        {field.helperText !== undefined && (
+          <Typography variant="caption" color="text.secondary" component="p" sx={{ mb: 1 }}>
+            {field.helperText}
+          </Typography>
+        )}
+        {Array.from({ length: count }, (_unused, index) => (
+          <Stack
+            key={groupKey(field.name, index, itemFields[0]?.name ?? 'row')}
+            direction="row"
+            spacing={1}
+            useFlexGap
+            data-testid={`group-row-${field.name}-${String(index)}`}
+            sx={{ mb: 1, alignItems: 'flex-start' }}
+          >
+            {itemFields.map((item) => (
+              <Box key={item.name} sx={{ flex: item.type === 'number' ? '0 0 110px' : '1 1 180px' }}>
+                {renderField(item, groupKey(field.name, index, item.name))}
+              </Box>
+            ))}
+            <Button
+              size="small"
+              color="error"
+              disabled={addDisabled}
+              data-testid={`group-remove-${field.name}-${String(index)}`}
+              onClick={() => removeRow(field, index)}
+              sx={{ mt: 1 }}
+            >
+              Remove
+            </Button>
+          </Stack>
+        ))}
+        {canAdd && (
+          <Button
+            size="small"
+            disabled={addDisabled}
+            data-testid={`group-add-${field.name}`}
+            onClick={() => addRow(field)}
+          >
+            {field.addLabel ?? `Add ${field.label.toLowerCase()}`}
+          </Button>
+        )}
+      </Box>
+    )
+  }
+
   const body = (
     <>
       {formError !== null && (
@@ -294,7 +540,8 @@ export function Form({
           {formError}
         </Alert>
       )}
-      {fields.map((field) => renderField(field))}
+      {fields.map((field) => (isGroup(field) ? renderGroup(field) : renderField(field)))}
+      {renderExtra?.(values)}
     </>
   )
 

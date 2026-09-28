@@ -338,10 +338,17 @@ describe('C0 — client foundation', () => {
     expect(screen.getByTestId('nav-bookings')).toBeInTheDocument()
     expect(screen.getByTestId('nav-rooms')).toBeInTheDocument()
 
-    // A route this user does hold opens normally, by clicking the nav item.
+    // A route this user does hold opens normally, by clicking the nav item. This
+    // used to assert `placeholder-bookings`, because `/bookings` was a
+    // placeholder when C0 landed; C2 replaced it with the real screen, so the
+    // claim is now stated against that screen's own root testid. The claim itself
+    // is unchanged — *a permitted route opens, and it is not the denial page* —
+    // and `/reports` in the test below is still a placeholder, so the guard is
+    // still exercised against a route with no screen of its own.
     const user = userEvent.setup()
     await user.click(within(screen.getByTestId('nav-bookings')).getByRole('link'))
-    expect(await screen.findByTestId('placeholder-bookings')).toBeInTheDocument()
+    expect(await screen.findByTestId('datatable')).toBeInTheDocument()
+    expect(screen.queryByTestId('placeholder-bookings')).not.toBeInTheDocument()
     expect(screen.queryByTestId('guard-denied-alert')).not.toBeInTheDocument()
   })
 

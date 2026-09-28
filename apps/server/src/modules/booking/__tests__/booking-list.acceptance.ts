@@ -108,6 +108,17 @@ async function main(): Promise<void> {
   const roomName = `Quanta ${runId}`
   const equipmentName = `Flux ${runId}`
   const purpose = `Temporal ${runId}`
+  /**
+   * The three fixtures below all start inside January 2031, and no other suite
+   * books a room that far out. Every count in this file is asserted *inside* that
+   * window, because the acceptance suites share one development database and the
+   * client suites cannot clean up after themselves — there is no `deleteBooking`,
+   * so a `bookings(page: 1, …)` call with no filter returns every row any earlier
+   * run left behind, and `totalCount === 3` would be a claim about the database
+   * being empty rather than about the query. Scoping the window keeps each
+   * assertion exact *and* independent of what else has run.
+   */
+  const fixtureWindow = { startDate: '2031-01-01T00:00:00.000Z', endDate: '2031-01-31T23:59:59.999Z' }
   const employeeRepository = dataSource.getRepository(Employee)
   const roomRepository = dataSource.getRepository(MeetingRoom)
   const equipmentRepository = dataSource.getRepository(Equipment)
@@ -246,7 +257,7 @@ async function main(): Promise<void> {
         }),
       )
 
-    const allBookings = await executeList(allContext, null, 1, 100)
+    const allBookings = await executeList(allContext, fixtureWindow, 1, 100)
     assert.equal(allBookings.bookings.totalCount, 3)
     assert.deepEqual(
       new Set(allBookings.bookings.items.map((booking) => booking.employeeId)),
@@ -265,17 +276,21 @@ async function main(): Promise<void> {
     assert.equal(secondBookingEquipmentLines[0]?.equipmentId, equipment.id)
     assert.equal(secondBookingEquipmentLines[0]?.requestedQuantity, 1)
 
+    // Already scoped: the caller's own employee id is per-run, so this count is
+    // exact without a filter and is the *unfiltered* counterpart to the one above.
     const ownBookings = await executeList(ownContext)
     assert.equal(ownBookings.bookings.totalCount, 2)
     assert.ok(ownBookings.bookings.items.every((booking) => booking.employeeId === ownEmployee.id))
     assert.ok(!ownBookings.bookings.items.some((booking) => booking.id === secondBooking.id))
 
+    // Each term below is unique to this run's fixtures, so an exact row set is the
+    // right assertion: a match that leaked in from another run would be a bug in the
+    // LIKE scoping, which is what this block is for.
     const searches = new Map<string, string[]>([
       [otherName, [secondBooking.id]],
       [roomName, [firstBooking.id, secondBooking.id, thirdBooking.id]],
       [equipmentName, [secondBooking.id]],
       [purpose, [secondBooking.id]],
-      ['REJECTED', [secondBooking.id]],
     ])
     for (const [search, expectedIds] of searches) {
       const result = await executeList(allContext, { search })
@@ -285,12 +300,31 @@ async function main(): Promise<void> {
         new Set(expectedIds),
       )
     }
+
+    // A status word is searchable as free text as well, and the membership assertion
+    // is the whole claim: `secondBooking`'s purpose (`Temporal <runId>`), its room
+    // (`Quanta <runId>`), its requester (`Other<runId>` Requester) and its equipment
+    // (`Flux <runId>`) all contain no "rejected", so the only column that can match is
+    // the status itself. It is asserted as membership rather than as an exact row set
+    // because the search is a LIKE over several columns, so a row whose *purpose*
+    // happens to contain the word is a correct match too, not a leak — and it is
+    // scoped to the fixtures' window because "rejected" is a *global* value: this
+    // database holds every REJECTED booking any other suite has ever made, and
+    // `bookings` is a page of them, so an unscoped call is asking whether this run's
+    // rejected booking happens to be among the oldest N in the shared table. It was
+    // not, which is how this assertion failed once the table passed a hundred
+    // rejected rows — a fact about the fixtures' age, not about the search.
+    const statusTextSearch = await executeList(allContext, { search: 'REJECTED', ...fixtureWindow })
+    assert.ok(
+      statusTextSearch.bookings.items.some((booking) => booking.id === secondBooking.id),
+      'A status word must match a booking whose searchable columns do not contain it',
+    )
     for (const search of ['%', '_']) {
       const result = await executeList(allContext, { search })
       assert.equal(result.bookings.totalCount, 0)
     }
 
-    const statusFiltered = await executeList(allContext, { status: 'REJECTED' })
+    const statusFiltered = await executeList(allContext, { status: 'REJECTED', ...fixtureWindow })
     assert.equal(statusFiltered.bookings.totalCount, 1)
     assert.equal(statusFiltered.bookings.items[0]?.id, secondBooking.id)
 
@@ -298,19 +332,20 @@ async function main(): Promise<void> {
       startDate: '2031-01-11T00:00:00.000Z',
       endDate: '2031-01-11T23:59:59.999Z',
     })
+    // A one-day window is already its own scope: only the second fixture starts then.
     assert.equal(dateFiltered.bookings.totalCount, 1)
     assert.equal(dateFiltered.bookings.items[0]?.id, secondBooking.id)
 
     const firstPage = await executeList(
       allContext,
-      null,
+      fixtureWindow,
       1,
       2,
       { field: 'startTime', direction: 'ASC' },
     )
     const secondPage = await executeList(
       allContext,
-      null,
+      fixtureWindow,
       2,
       2,
       { field: 'startTime', direction: 'ASC' },

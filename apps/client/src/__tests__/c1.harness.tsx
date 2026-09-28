@@ -56,8 +56,20 @@ const SERVER_TSCONFIG = path.join(REPO_ROOT, 'apps', 'server', 'tsconfig.json')
  * blanket ignore.
  */
 function isApolloInternalRethrow(reason: unknown): boolean {
-  if (reason instanceof Error && reason.name === 'AbortError') {
-    return /operation was aborted/i.test(reason.message)
+  // Duck-typed on `name`/`message` rather than `instanceof Error`, because the same
+  // teardown arrives in two shapes: Apollo's own `AbortError`, and the `DOMException`
+  // jsdom's `AbortController` rejects with — which is *not* an `Error` subclass there,
+  // so the `instanceof` half of this check missed it and the C1 suite failed roughly
+  // one run in three on a teardown it is meant to tolerate. Nothing about the event
+  // differs; only the constructor does, and the requirement stays the same one: an
+  // abort, carrying abort's message, and nothing else.
+  if (
+    typeof reason === 'object' &&
+    reason !== null &&
+    (reason as { name?: unknown }).name === 'AbortError' &&
+    typeof (reason as { message?: unknown }).message === 'string'
+  ) {
+    return /operation was aborted/i.test((reason as { message: string }).message)
   }
   if (typeof reason !== 'object' || reason === null) {
     return false

@@ -7,6 +7,9 @@ import { AppShell } from '@/components/layout/AppShell'
 import { firstPermittedPath, NAV_ITEMS, type NavItem } from '@/components/layout/nav-items'
 import { PlaceholderPage } from '@/components/layout/PlaceholderPage'
 import { LoginPage } from '@/features/auth/pages/LoginPage'
+import { ApprovalsPage } from '@/features/bookings/pages/ApprovalsPage'
+import { BookingDetailPage } from '@/features/bookings/pages/BookingDetailPage'
+import { BookingsPage } from '@/features/bookings/pages/BookingsPage'
 import { EmployeesPage } from '@/features/employees/pages/EmployeesPage'
 import { EquipmentPage } from '@/features/equipment/pages/EquipmentPage'
 import { RolesPage } from '@/features/roles/pages/RolesPage'
@@ -42,20 +45,34 @@ function NotFound(): React.ReactNode {
 }
 
 /**
- * C1 replaced four of these with real screens. The map stays the single source
- * of truth: a nav item that is not listed here renders the placeholder behind
- * exactly the same guard, so adding a screen can never widen access.
+ * C1 replaced four of these with real screens, C2 the bookings list and the
+ * manager's approval queue. The map
+ * stays the single source of truth: a nav item that is not listed here renders
+ * the placeholder behind exactly the same guard, so adding a screen can never
+ * widen access.
  */
 const REAL_SCREENS: Readonly<Record<string, ReactElement>> = {
   '/employees': <EmployeesPage />,
   '/roles': <RolesPage />,
   '/rooms': <RoomsPage />,
   '/equipment': <EquipmentPage />,
+  '/bookings': <BookingsPage />,
+  // Guarded by its own nav item's `booking:approve`, because `screenFor` reads
+  // the guard from `NAV_ITEMS` — the approvals entry, not the bookings one.
+  '/bookings/approvals': <ApprovalsPage />,
 }
 
 function screenFor(item: NavItem): React.ReactNode {
   return REAL_SCREENS[item.path] ?? <PlaceholderPage item={item} />
 }
+
+/** The `/bookings` nav item, reused as the detail route's guard (see below). */
+const BOOKINGS_NAV: NavItem =
+  NAV_ITEMS.find((item) => item.path === '/bookings') ??
+  // Unreachable while `NAV_ITEMS` holds a `/bookings` entry; an empty key list is
+  // the "any signed-in user" guard, so a typo here fails closed on rendering
+  // rather than throwing at import.
+  { path: '/bookings', label: 'Bookings', keys: [] }
 
 export function AppRoutes(): React.ReactNode {
   return (
@@ -82,6 +99,20 @@ export function AppRoutes(): React.ReactNode {
             }
           />
         ))}
+        {/*
+          The booking detail route is a child of the list's, not a nav item of its
+          own, so it is declared separately — but it takes its guard *from* that
+          nav item rather than repeating the key list, so a session that cannot
+          open the list can never deep-link to a booking either.
+        */}
+        <Route
+          path="/bookings/:id"
+          element={
+            <RequirePermission keys={BOOKINGS_NAV.keys} mode={BOOKINGS_NAV.mode ?? 'any'}>
+              <BookingDetailPage />
+            </RequirePermission>
+          }
+        />
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>

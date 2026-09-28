@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "codegen": "graphql-codegen --config codegen.ts",
     "test:c0": "vitest run --config vitest.c0.config.ts",
-    "test:c1": "vitest run --config vitest.c1.config.ts"
+    "test:c1": "vitest run --config vitest.c1.config.ts",
+    "test:c2": "vitest run --config vitest.c2.config.ts"
   },
   "dependencies": {
     "@apollo/client": "^4.3.1",

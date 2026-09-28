@@ -152,10 +152,26 @@ export class BookingType {
   equipmentLines!: BookingEquipmentDetailType[]
 }
 
+/**
+ * A person referenced by a booking, and the two halves of their name.
+ *
+ * `name` is the server-resolved label, joined and batched in one loader for the
+ * whole page (NFR-1) — which is why the *list* shows it as it stands. The parts
+ * are here for the same reason FR-7/FR-48 name a client-side fallback: the client
+ * keeps its own `displayName()` twin, and a function that takes
+ * `{ firstName, lastName }` cannot be called on a pre-joined string. A detail view
+ * is a single record, so there is no N+1 argument against deriving the label there.
+ */
 @ObjectType('BookingActor')
 class BookingActorType {
   @Field(() => ID, { nullable: true })
   id!: string | null
+
+  @Field(() => String, { nullable: true })
+  firstName!: string | null
+
+  @Field(() => String, { nullable: true })
+  lastName!: string | null
 
   @Field(() => String)
   name!: string
@@ -201,6 +217,14 @@ class BookingSummaryType {
 class BookingRequesterType {
   @Field(() => ID, { nullable: true })
   id!: string | null
+
+  // See `BookingActorType`: the parts exist for the client's own
+  // `displayName()` twin; `name` stays the server-resolved label.
+  @Field(() => String, { nullable: true })
+  firstName!: string | null
+
+  @Field(() => String, { nullable: true })
+  lastName!: string | null
 
   @Field(() => String)
   name!: string
@@ -269,6 +293,8 @@ async function toBookingActor(
   const employee = await loadEmployee(employeeId, context.loaders.employee)
   return {
     id: employee?.id ?? null,
+    firstName: employee?.firstName ?? null,
+    lastName: employee?.lastName ?? null,
     name: employeeDisplayName(employee),
   }
 }
@@ -440,6 +466,8 @@ export class BookingResolver {
           })
     return {
       id: employee?.id ?? null,
+      firstName: employee?.firstName ?? null,
+      lastName: employee?.lastName ?? null,
       name: employeeDisplayName(employee),
       email: employee?.email ?? DELETED_USER_DISPLAY_NAME,
       recentBookings: recentBookings.map(toBookingSummary),
