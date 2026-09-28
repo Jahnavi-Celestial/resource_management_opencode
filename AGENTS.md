@@ -137,8 +137,22 @@ no booking route is a placeholder any more; `/audit` and `/reports` still are, a
 they belong to C4 (docs/PLAN.md:270), not here. `npm run test:c2` is now five
 files / 24 tests: the list+create and detail files, the approval queue, the
 availability + lifecycle file (`c2.availability.test.tsx`), and the static reuse
-proof (`c2.reuse.test.ts`, no server). C3 (the `ws` client and notification UI)
-is next.
+proof (`c2.reuse.test.ts`, no server). C3 (the `ws` client and
+notification UI) is built: `realtime/ws-client.ts` (JWT-authenticated
+WebSocket over `?token=` query param, exponential-backoff reconnect,
+`exp` expiry check), `realtime/useNotificationSocket.ts` (one socket
+per session, Apollo cache write of `unreadCount` from server,
+`NotificationSnackbar` toast), `components/layout/NotificationBell.tsx`
+(bell + popover), `features/notifications/pages/NotificationsPage.tsx`
+(DataTable, server pagination), `/notifications` route and nav item.
+C4 is complete: `features/audit/` (read-only audit log screen at `/audit`,
+gated by `audit:read`, DataTable with server pagination, filters in URL
+query string, actor rendered through shared `displayName()`) and
+`features/reports/` (four report screens at `/reports`, gated by
+`report:read`, MUI Tabs, MUI Table in client mode for bounded aggregated
+result sets — report queries return plain arrays with no page/pageSize
+args, so server-driven DataTable does not apply). `npm run test:c0`/`c1`/`c2` pass.
+`npm run test:c0`/`c1`/`c2` pass.
 
 ## Commands
 
@@ -268,7 +282,8 @@ npm run test:c2         # C2 acceptance suite: boots the real server on an ephem
                         # Files: c2.acceptance, c2.detail, c2.approvals, c2.availability, c2.reuse
                         # (needs local Postgres, no dev server)
 npm run dev:client      # Vite dev server for apps/client (5173; set VITE_GRAPHQL_URL, default
-                        # http://localhost:4000/graphql)
+                         # http://localhost:4000/graphql, and VITE_WS_URL to the realtime
+                         # gateway, default ws://localhost:4000/ws)
 npm run codegen:client  # regenerate apps/client/src/graphql/ from apps/server/schema.graphql
                         # (run after any server schema change; the output is gitignored)
 npm run dev            # boot server; GraphQL at http://localhost:3000/graphql,
@@ -319,12 +334,20 @@ Scripts outside `npm run dev`:
   recipient-scoped re-read, so a foreign id is never even loaded; the service
   then raises `NotFoundError('Notification not found')`, which discloses nothing
   about the other user's record (FR-3).
-- Realtime delivery is a post-commit side channel, never a source of truth: the
-  `ws` gateway authenticates through `resolveAuthContext` (no token verification
-  is reimplemented), and `NotificationService.emitCreated(manager, created)` runs
-  only *after* the notification transaction has committed, so a rolled-back write
-  is never pushed. `attachRealtimeGateway(null)` makes emits silent no-ops, so
-  the database row is still written when nobody is connected.
+ - Realtime delivery is a post-commit side channel, never a source of truth: the
+   `ws` gateway authenticates through `resolveAuthContext` (no token verification
+   is reimplemented), and `NotificationService.emitCreated(manager, created)` runs
+   only *after* the notification transaction has committed, so a rolled-back write
+   is never pushed. `attachRealtimeGateway(null)` makes emits silent no-ops, so
+   the database row is still written when nobody is connected.
+ - Notification architecture (C3): `useNotificationSocket` owns exactly one
+   `RealtimeSocket` per logged-in session, mounted once in `AppProviders` inside
+   `AuthProvider`. The server's `unreadCount` is written verbatim to the Apollo
+   cache (never incremented locally), and both `UnreadCount` and `MyNotifications`
+   are refetched on every (re)open. The socket is gated by `realtime={true}` in
+   `AppProviders`; the acceptance harnesses opt out because jsdom's `undici`
+   `WebSocket` has a broken `dispatchEvent`. Notifications are available to every
+   authenticated user — there is no notification permission key in FR-89.
 - The outbox is *addressed*, not linked: `email_outbox` has no booking FK, only
   `to_email`, so acceptance suites that approve/reject must clear the rows
   addressed to their fixture employees (by address, before deleting the

@@ -104,14 +104,18 @@ describe('C2 — reuse: one DataTable, one Form, one displayName()', () => {
     // booking, so there is no grid to reuse and nothing to prove about it. Named
     // explicitly, because "every page imports DataTable" would be a false claim
     // about a detail screen.
-    // Stated as the whole list rather than "the ones I thought of": the three
-    // screens in the app with no collection to render are named here, so a
-    // *fourth* one — a new screen with its own table — fails the check instead of
+    // ReportsPage is the fourth: report queries return plain arrays (no page/
+    // pageSize args), so the server-driven DataTable does not apply. Reports
+    // use MUI Table in client mode for bounded aggregated result sets.
+    // Stated as the whole list rather than "the ones I thought of": the screens
+    // in the app with no collection to render are named here, so a
+    // *fifth* one — a new screen with its own table — fails the check instead of
     // quietly passing it.
     expect(pagesWithoutSharedDataTable).toEqual([
       'src/components/layout/PlaceholderPage.tsx',
       'src/features/auth/pages/LoginPage.tsx',
       'src/features/bookings/pages/BookingDetailPage.tsx',
+      'src/features/reports/pages/ReportsPage.tsx',
     ])
 
     // The three booking screens name the shared components they use, by their

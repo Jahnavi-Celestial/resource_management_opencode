@@ -311,7 +311,7 @@ export function renderApp(client: ApolloClient, route: string): RenderResult {
     )
   }
   return render(
-    <AppProviders client={client} initialEntries={[route]}>
+    <AppProviders client={client} initialEntries={[route]} realtime={false}>
       <AuthProbe />
       <AppRoutes />
     </AppProviders>,

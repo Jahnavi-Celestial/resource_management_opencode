@@ -199,7 +199,7 @@ function renderApp(client: ApolloClient, route: string): RenderResult {
     )
   }
   return render(
-    <AppProviders client={client} initialEntries={[route]}>
+    <AppProviders client={client} initialEntries={[route]} realtime={false}>
       <AuthProbe />
       <AppRoutes />
     </AppProviders>,
@@ -300,11 +300,11 @@ describe('C0 — client foundation', () => {
       'room:write',
     ])
 
-    // The UI is driven by that set: the admin sees every nav item. Eight since
-    // C1 added the Roles screen; the assertion is deliberately a count, not a
-    // list, so a nav item cannot be added without this number moving.
+    // The UI is driven by that set: the admin sees every nav item.
+    // Nine with the C3 notification bell; the count is deliberate so a
+    // nav item cannot be added without this number moving.
     const nav = screen.getByTestId('nav')
-    expect(within(nav).getAllByRole('listitem')).toHaveLength(8)
+    expect(within(nav).getAllByRole('listitem')).toHaveLength(9)
     expect(screen.getByTestId('current-user-email')).toHaveTextContent(envValue('ADMIN_EMAIL'))
     expect(screen.getByTestId('role-Admin')).toBeInTheDocument()
     view.unmount()
@@ -436,25 +436,28 @@ describe('C0 — client foundation', () => {
     expect(apolloSource).toMatch(/authLink\.concat\(httpLink\)/)
     expect(apolloSource).not.toMatch(/split\(|GraphQLWsLink|graphql-ws|WebSocket|ws:\/\//)
 
-    // Nothing anywhere in the client may reintroduce one.
-    const offenders: string[] = []
-    const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir)) {
-        const full = path.join(dir, entry)
-        if (statSync(full).isDirectory()) {
-          if (full !== path.join(CLIENT_ROOT, 'node_modules')) {
-            walk(full)
-          }
-          continue
-        }
-        if (!/\.tsx?$/.test(entry)) continue
-        if (full.includes(`${path.sep}__tests__${path.sep}`)) continue
-        const text = stripComments(readFileSync(full, 'utf8'))
-        if (/graphql-ws|GraphQLWsLink|createClient\(|ws:\/\/|new WebSocket/.test(text)) {
-          offenders.push(path.relative(CLIENT_ROOT, full))
-        }
-      }
-    }
+     // Nothing outside the realtime transport may reintroduce one. The
+     // `ws`-importing file under `src/realtime/` is the C3 gateway
+     // client, which is deliberately a separate transport — not an
+     // Apollo `split` link (FR-59: GraphQL stays query/mutation only).
+     const offenders: string[] = []
+     const walk = (dir: string): void => {
+       for (const entry of readdirSync(dir)) {
+         const full = path.join(dir, entry)
+         if (statSync(full).isDirectory()) {
+           if (full === path.join(CLIENT_ROOT, 'node_modules')) continue
+           if (full.endsWith('realtime')) continue
+           walk(full)
+           continue
+         }
+         if (!/\.tsx?$/.test(entry)) continue
+         if (full.includes(`${path.sep}__tests__${path.sep}`)) continue
+         const text = stripComments(readFileSync(full, 'utf8'))
+         if (/graphql-ws|GraphQLWsLink|createClient\(|ws:\/\/|new WebSocket/.test(text)) {
+           offenders.push(path.relative(CLIENT_ROOT, full))
+         }
+       }
+     }
     walk(path.join(CLIENT_ROOT, 'src'))
     expect(offenders).toEqual([])
   })

@@ -200,6 +200,7 @@ export function DataTable<Row extends GridValidRowModel>({
       ...(column.flex === undefined ? {} : { flex: column.flex }),
       ...(column.align === undefined ? {} : { align: column.align, headerAlign: column.align }),
       ...(column.type === undefined ? {} : { type: column.type }),
+      ...(column.renderCell === undefined ? {} : { renderCell: (params) => column.renderCell?.(params.row) }),
     }))
     if (actions === undefined) {
       return base

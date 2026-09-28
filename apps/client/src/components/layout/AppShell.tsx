@@ -9,6 +9,7 @@ import Typography from '@mui/material/Typography'
 import { Outlet } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthProvider'
 import { Nav } from './Nav'
+import { NotificationBell } from './NotificationBell'
 
 const DRAWER_WIDTH = 232
 
@@ -29,6 +30,7 @@ export function AppShell(): React.ReactNode {
           <Typography variant="body2" data-testid="current-user-email">
             {session?.employee.email ?? ''}
           </Typography>
+          <NotificationBell />
           <Button color="inherit" onClick={() => void logout()} data-testid="sign-out">
             Sign out
           </Button>

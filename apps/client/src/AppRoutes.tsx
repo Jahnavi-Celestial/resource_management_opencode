@@ -7,6 +7,7 @@ import { AppShell } from '@/components/layout/AppShell'
 import { firstPermittedPath, NAV_ITEMS, type NavItem } from '@/components/layout/nav-items'
 import { PlaceholderPage } from '@/components/layout/PlaceholderPage'
 import { LoginPage } from '@/features/auth/pages/LoginPage'
+import { NotificationsPage } from '@/features/notifications/pages/NotificationsPage'
 import { ApprovalsPage } from '@/features/bookings/pages/ApprovalsPage'
 import { BookingDetailPage } from '@/features/bookings/pages/BookingDetailPage'
 import { BookingsPage } from '@/features/bookings/pages/BookingsPage'
@@ -14,6 +15,8 @@ import { EmployeesPage } from '@/features/employees/pages/EmployeesPage'
 import { EquipmentPage } from '@/features/equipment/pages/EquipmentPage'
 import { RolesPage } from '@/features/roles/pages/RolesPage'
 import { RoomsPage } from '@/features/rooms/pages/RoomsPage'
+import { AuditLogPage } from '@/features/audit/pages/AuditLogPage'
+import { ReportsPage } from '@/features/reports/pages/ReportsPage'
 import type { ReactElement } from 'react'
 
 /** Sends `/` to the first screen this session is allowed to open. */
@@ -52,6 +55,7 @@ function NotFound(): React.ReactNode {
  * widen access.
  */
 const REAL_SCREENS: Readonly<Record<string, ReactElement>> = {
+  '/notifications': <NotificationsPage />,
   '/employees': <EmployeesPage />,
   '/roles': <RolesPage />,
   '/rooms': <RoomsPage />,
@@ -60,6 +64,8 @@ const REAL_SCREENS: Readonly<Record<string, ReactElement>> = {
   // Guarded by its own nav item's `booking:approve`, because `screenFor` reads
   // the guard from `NAV_ITEMS` — the approvals entry, not the bookings one.
   '/bookings/approvals': <ApprovalsPage />,
+  '/audit': <AuditLogPage />,
+  '/reports': <ReportsPage />,
 }
 
 function screenFor(item: NavItem): React.ReactNode {

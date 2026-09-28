@@ -78,6 +78,8 @@ export interface DataTableColumn<Row extends GridValidRowModel> {
   flex?: number
   align?: 'left' | 'center' | 'right'
   type?: 'string' | 'number' | 'boolean'
+  /** Custom cell renderer. Receives the row; returns ReactNode. */
+  renderCell?: (row: Row) => ReactNode
 }
 
 export interface DataTableProps<Row extends GridValidRowModel> {

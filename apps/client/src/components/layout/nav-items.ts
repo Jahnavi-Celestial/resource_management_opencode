@@ -35,6 +35,17 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { path: '/roles', label: 'Roles', keys: ['role:read'] },
   { path: '/audit', label: 'Audit log', keys: ['audit:read'] },
   { path: '/reports', label: 'Reports', keys: ['report:read'] },
+  // Notifications are available to every authenticated user; there is
+  // no notification permission key in FR-89, so the guard is the
+  // empty list (any signed-in user). Placed last so the home redirect
+  // (`firstPermittedPath`) still lands on a functional screen for
+  // sessions that have no explicit permission beyond the defaults.
+  {
+    path: '/notifications',
+    label: 'Notifications',
+    keys: [],
+    mode: 'any',
+  },
 ]
 
 export function isPermitted(item: NavItem, granted: ReadonlySet<string>): boolean {
