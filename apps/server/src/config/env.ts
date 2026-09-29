@@ -52,6 +52,14 @@ export interface Env {
     email: string
     password: string
   }
+  manager: {
+    email: string
+    password: string
+  }
+  employee: {
+    email: string 
+    password: string
+  }
 }
 
 function required(name: string): string {
@@ -124,8 +132,16 @@ export function loadEnv(): Env {
     rejectionReasonMinLength: requiredInt('REJECTION_REASON_MIN_LENGTH', 10),
     reminderLeadTimeMinutes: requiredInt('REMINDER_LEAD_TIME_MINUTES', 60),
     admin: {
-      email: optional('ADMIN_EMAIL', 'admin@resource.local').toLowerCase(),
-      password: optional('ADMIN_PASSWORD', 'Admin@12345!'),
+      email: required('ADMIN_EMAIL').toLowerCase(),
+      password: required('ADMIN_PASSWORD'),
+    },
+    manager: {
+      email: required('MANAGER_EMAIL').toLowerCase(),
+      password: required('MANAGER_PASSWORD'),
+    },
+    employee: {
+      email: required('EMPLOYEE_EMAIL').toLowerCase(),
+      password: required('EMPLOYEE_PASSWORD'),
     },
   }
 
