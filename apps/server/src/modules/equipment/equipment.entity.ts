@@ -1,5 +1,11 @@
-import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm'
+import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm'
 
+// Case-insensitive unique index owned by migration
+// 1790176946848-AddEquipmentNameUniqueCaseInsensitive (LOWER(name)). TypeORM's
+// @Index cannot express an expression index, so `synchronize: false` keeps
+// schema sync from dropping the DB index or creating a second, plain-column
+// one over the same name.
+@Index('uq_equipment_name', ['name'], { unique: true, synchronize: false })
 @Entity('equipment')
 export class Equipment {
   @PrimaryGeneratedColumn('uuid')

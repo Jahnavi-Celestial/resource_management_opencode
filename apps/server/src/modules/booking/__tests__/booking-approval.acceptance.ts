@@ -87,7 +87,7 @@ async function main(): Promise<void> {
     return equipment.id
   }
 
-  async function createPendingBooking(employeeId: string, roomId: string, offsetHours?: number): Promise<Booking> {
+  async function createPendingBooking(employeeId: string, roomId: string, offsetHours?: number, purpose?: string): Promise<Booking> {
     const repository = dataSource.getRepository(Booking)
     const oh = offsetHours ?? nextOffset()
     const win = windowForOffset(oh)
@@ -97,7 +97,7 @@ async function main(): Promise<void> {
         roomId,
         startTime: win.startTime,
         endTime: win.endTime,
-        purpose: 'Approval fixture booking',
+        purpose: purpose ?? 'Approval fixture booking',
         numberOfAttendees: 1,
         rejectionReason: null,
         status: 'PENDING',
@@ -174,7 +174,7 @@ async function main(): Promise<void> {
   }
 
   try {
-    // --- SCENARIO 1: Pending queue returns bookings in createdAt order ---
+    // --- SCENARIO 1: Pending queue returns bookings in createdAt order, newest first ---
     await resetData()
     const ownerId = await createEmployee('Approval', 'Owner', 'owner')
     const managerId = await createEmployee('Approval', 'Manager', 'manager')
@@ -184,10 +184,10 @@ async function main(): Promise<void> {
 
     await createPendingBooking(ownerId, roomId, 48)
     await createPendingBooking(ownerId, roomId, 49)
-    const queue = await service.pendingQueue({ page: 1, pageSize: 10 }, { field: 'createdAt', direction: 'ASC' })
+    const queue = await service.pendingQueue({ page: 1, pageSize: 10 }, undefined, { field: 'createdAt', direction: 'DESC' })
     assert.equal(queue.items.length >= 2, true, 'Pending queue should return at least 2 PENDING bookings')
-    assert.ok(queue.items[0]!.createdAt <= queue.items[1]!.createdAt, 'Queue ordered by createdAt ASC')
-    console.log(`PASS 1 pending queue: ${queue.items.length} items, ordered by createdAt`)
+    assert.ok(queue.items[0]!.createdAt >= queue.items[1]!.createdAt, 'Queue ordered by createdAt DESC')
+    console.log(`PASS 1 pending queue: ${queue.items.length} items, ordered by createdAt DESC`)
 
     // --- SCENARIO 2: Approve a valid PENDING booking ---
     const toApprove = await createPendingBooking(ownerId, roomId, 50)
@@ -355,8 +355,16 @@ async function main(): Promise<void> {
     const schema = await buildSchema({ resolvers: [BookingResolver], authChecker })
 
     const PENDING_QUEUE_QUERY = `
-      query PendingQueue($page: Int!, $pageSize: Int!) {
-        pendingQueue(page: $page, pageSize: $pageSize) {
+      query PendingQueue($page: Int!, $pageSize: Int!, $search: String) {
+        pendingQueue(page: $page, pageSize: $pageSize, search: $search) {
+          totalCount
+          items { id status createdAt }
+        }
+      }
+    `
+    const SORTED_QUEUE_QUERY = `
+      query PendingQueue($page: Int!, $pageSize: Int!, $sort: SortInput!) {
+        pendingQueue(page: $page, pageSize: $pageSize, sort: $sort) {
           totalCount
           items { id status createdAt }
         }
@@ -432,30 +440,58 @@ async function main(): Promise<void> {
     )
     console.log(`PASS 11b pendingQueue as employee lacking booking:approve → ${errorCode(queueWrongPermission)} "${firstError(queueWrongPermission).message}"`)
 
-    // --- SCENARIO 12: no caller-supplied sort argument; order forced to createdAt ASC ---
-    const sortAttempt = await graphql({
-      schema,
-      source: 'query { pendingQueue(page: 1, pageSize: 10, sort: { field: "createdAt", direction: DESC }) { totalCount } }',
-      contextValue: bothPermissions,
-    })
-    assert.ok(
-      (sortAttempt.errors ?? []).some((error) => /sort/.test(error.message)),
-      `pendingQueue must reject a caller-supplied sort argument, got: ${JSON.stringify(sortAttempt.errors?.map((e) => e.message))}`,
-    )
-    console.log(`PASS 12a pendingQueue exposes no sort argument: "${sortAttempt.errors?.[0]?.message ?? ''}"`)
-
+    // --- SCENARIO 12: caller-supplied sort honoured; default newest-first; search filters ---
     const firstQueued = await createPendingBooking(requesterId, gqlRoomId, 70)
     const secondQueued = await createPendingBooking(requesterId, gqlRoomId, 71)
+    const searchQueued = await createPendingBooking(requesterId, gqlRoomId, 75, 'zzqueueuniquemarker')
 
-    // `pendingQueue` takes no search and no status argument (SCENARIO 12a), so it
-    // is the *global* PENDING set: in a shared development database page 1 is
-    // whatever an earlier run left behind, and the two fixtures — the newest
-    // PENDING rows in the table — are not on it. Asserting `totalCount === 2` here
-    // would make the suite depend on the database being empty, which no suite may
-    // assume (the C1/C2 suites leave bookings behind because there is no
-    // `deleteBooking`). So membership is asserted by walking the whole queue, and
-    // the order is asserted where it is actually load-bearing: over the entire
-    // result rather than over the first page.
+    // 12a: an explicit sort is honoured — walking the whole queue with createdAt ASC
+    // puts the older fixture before the newer one. (A page-1 assertion would be
+    // the shared-database trap: with ASC, page 1 is the *oldest* PENDING rows in
+    // the table, and these fixtures are the newest.)
+    const ascIds: string[] = []
+    for (let page = 1; page <= 50; page += 1) {
+      const pageResult = await gql(
+        SORTED_QUEUE_QUERY,
+        { page, pageSize: 100, sort: { field: 'createdAt', direction: 'ASC' } },
+        bothPermissions,
+      )
+      assert.equal(pageResult.errors, undefined, `pendingQueue page ${page} failed: ${JSON.stringify(pageResult.errors?.map((e) => e.message))}`)
+      const pageData = pageResult.data as { pendingQueue: { totalCount: number; items: Array<{ id: string }> } }
+      if (pageData.pendingQueue.items.length === 0) {
+        break
+      }
+      ascIds.push(...pageData.pendingQueue.items.map((item) => item.id))
+      if (ascIds.length >= pageData.pendingQueue.totalCount) {
+        break
+      }
+    }
+    assert.ok(
+      ascIds.indexOf(firstQueued.id) < ascIds.indexOf(secondQueued.id),
+      `pendingQueue with sort createdAt ASC must order ${firstQueued.id} before ${secondQueued.id}`,
+    )
+    console.log(`PASS 12a pendingQueue honours a caller-supplied sort (createdAt ASC): ${firstQueued.id} before ${secondQueued.id}`)
+
+    // 12a-2: a sort field outside the whitelist is refused, not silently ignored.
+    const badSort = await gql(
+      SORTED_QUEUE_QUERY,
+      { page: 1, pageSize: 10, sort: { field: 'requester', direction: 'ASC' } },
+      bothPermissions,
+    )
+    assert.ok(
+      (badSort.errors ?? []).some((error) => /Cannot sort by/.test(error.message)),
+      `pendingQueue must refuse a non-whitelisted sort field, got: ${JSON.stringify(badSort.errors?.map((e) => e.message))}`,
+    )
+    console.log(`PASS 12a-2 pendingQueue refuses a non-whitelisted sort field: "${badSort.errors?.[0]?.message ?? ''}"`)
+
+    // `pendingQueue` takes no status argument, so it is the *global* PENDING set:
+    // in a shared development database page 1 is whatever an earlier run left
+    // behind, and the fixtures — the newest PENDING rows in the table — are not
+    // on it. Asserting `totalCount === 3` here would make the suite depend on the
+    // database being empty, which no suite may assume (the C1/C2 suites leave
+    // bookings behind because there is no `deleteBooking`). So membership is
+    // asserted by walking the whole queue, and the order is asserted where it is
+    // actually load-bearing: over the entire result rather than over the first page.
     const queuedIds: string[] = []
     const queuedCreatedAt: string[] = []
     let totalCount = 0
@@ -483,23 +519,42 @@ async function main(): Promise<void> {
     )) as Array<{ count: number }>
     assert.equal(totalCount, pendingRows[0]!.count, 'pendingQueue.totalCount must count every PENDING booking')
 
-    // Both fixtures are in the queue…
+    // All three fixtures are in the queue…
     assert.ok(queuedIds.includes(firstQueued.id), `Queue must contain ${firstQueued.id}`)
     assert.ok(queuedIds.includes(secondQueued.id), `Queue must contain ${secondQueued.id}`)
+    assert.ok(queuedIds.includes(searchQueued.id), `Queue must contain ${searchQueued.id}`)
 
-    // …and it is ordered createdAt ASC, not merely "the fixtures are there": a
-    // DESC queue would put secondQueued before firstQueued, so this relative order
-    // is the claim that fails if the forced sort is dropped.
+    // …and with no caller-supplied sort the default is newest-first, not merely
+    // "the fixtures are there": an ASC queue would put firstQueued before
+    // secondQueued, so this relative order is the claim that fails if the default
+    // is dropped.
     assert.deepEqual(
       queuedCreatedAt,
-      [...queuedCreatedAt].sort(),
-      'Queue must be ordered by createdAt ASC across every page',
+      [...queuedCreatedAt].sort().reverse(),
+      'Queue must be ordered by createdAt DESC across every page',
     )
     assert.ok(
-      queuedIds.indexOf(firstQueued.id) < queuedIds.indexOf(secondQueued.id),
-      `Queue must be ordered by createdAt ASC: ${firstQueued.id} → ${secondQueued.id}`,
+      queuedIds.indexOf(secondQueued.id) < queuedIds.indexOf(firstQueued.id),
+      `Queue must be ordered by createdAt DESC: ${secondQueued.id} → ${firstQueued.id}`,
     )
-    console.log(`PASS 12b pendingQueue returns ${totalCount} PENDING bookings ordered createdAt ASC: ${firstQueued.id} → ${secondQueued.id}`)
+    console.log(`PASS 12b pendingQueue returns ${totalCount} PENDING bookings ordered createdAt DESC: ${secondQueued.id} → ${firstQueued.id}`)
+
+    // 12c: search filters the queue with the bookings list's own LIKE — a unique
+    // marker matches exactly its one booking, and the shared fixture purpose
+    // matches the other two but not the marked one.
+    const searchHit = await gql(PENDING_QUEUE_QUERY, { page: 1, pageSize: 100, search: 'zzqueueuniquemarker' }, bothPermissions)
+    assert.equal(searchHit.errors, undefined, `pendingQueue search failed: ${JSON.stringify(searchHit.errors?.map((e) => e.message))}`)
+    const hitData = searchHit.data as { pendingQueue: { totalCount: number; items: Array<{ id: string }> } }
+    assert.equal(hitData.pendingQueue.totalCount, 1, 'A unique search marker must match exactly one booking')
+    assert.equal(hitData.pendingQueue.items[0]!.id, searchQueued.id, 'The unique search marker must match its own booking')
+
+    const searchShared = await gql(PENDING_QUEUE_QUERY, { page: 1, pageSize: 100, search: 'Approval fixture booking' }, bothPermissions)
+    const sharedData = searchShared.data as { pendingQueue: { totalCount: number; items: Array<{ id: string }> } }
+    const sharedIds = sharedData.pendingQueue.items.map((item) => item.id)
+    assert.ok(sharedIds.includes(firstQueued.id), 'A shared purpose must match the first fixture')
+    assert.ok(sharedIds.includes(secondQueued.id), 'A shared purpose must match the second fixture')
+    assert.ok(!sharedIds.includes(searchQueued.id), 'A shared purpose must not match the uniquely marked booking')
+    console.log(`PASS 12c pendingQueue search filters by purpose: 1 unique hit, ${sharedData.pendingQueue.totalCount} shared-purpose hits`)
 
     // --- SCENARIO 13: approveBooking is gated by booking:approve (FR-51) ---
     const approveAnonymous = await gql(APPROVE_MUTATION, { id: firstQueued.id }, anonymous)

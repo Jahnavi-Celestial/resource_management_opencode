@@ -3,6 +3,7 @@ import type { Readable } from 'node:stream'
 import { createServer } from 'node:net'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
+import { Client } from 'pg'
 import type { ApolloClient } from '@apollo/client'
 import { render, screen, waitFor, type RenderResult } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -119,6 +120,31 @@ export function envValue(key: string): string {
     }
   }
   throw new Error(`${key} is not set in .env`)
+}
+
+/**
+ * Deletes outbox rows whose address starts with `prefix`. The welcome email's
+ * rows are addressed, not linked, so they outlive the fixture employees — and
+ * a running dev server's cron would dutifully send them. One fixed statement
+ * against one fixed table, never a hook into the server's DataSource: the
+ * suite tests the app over HTTP, and this is the debris the API will not let
+ * it remove.
+ */
+export async function clearOutboxLike(prefix: string): Promise<number> {
+  const client = new Client({
+    host: envValue('DB_HOST'),
+    port: Number(envValue('DB_PORT')),
+    user: envValue('DB_USERNAME'),
+    password: envValue('DB_PASSWORD'),
+    database: envValue('DB_NAME'),
+  })
+  await client.connect()
+  try {
+    const result = await client.query('DELETE FROM email_outbox WHERE to_email LIKE $1', [prefix])
+    return result.rowCount ?? 0
+  } finally {
+    await client.end()
+  }
 }
 
 async function freePort(): Promise<number> {

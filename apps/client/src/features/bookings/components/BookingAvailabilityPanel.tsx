@@ -1,3 +1,4 @@
+import { useEffect, useMemo } from 'react'
 import { useQuery } from '@apollo/client/react'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
@@ -62,6 +63,14 @@ export interface BookingAvailabilityPanelProps {
   endTime: string
   /** The draft's equipment lines, deduplicated by item. */
   equipment: readonly AvailabilityEquipmentLine[]
+  /**
+   * Reports the *debounced* window the panel is asking about, so the screen
+   * can show the same window-aware numbers in the equipment select's options
+   * while the draft is still moving. The settled question is reported rather
+   * than the immediate one: it is the question whose answer is on screen, so
+   * the select never quotes a window the panel has stopped asking about.
+   */
+  onWindowChange?: (question: WindowQuestion) => void
 }
 
 interface AvailabilityWindow {
@@ -79,7 +88,7 @@ interface AvailabilityWindow {
  * (The submit-time rule still belongs to the form's own `validateValues`; this is
  * only about when the *question* is worth asking.)
  */
-type WindowQuestion =
+export type WindowQuestion =
   | { kind: 'incomplete' }
   | { kind: 'unparseable' }
   | { kind: 'backwards' }
@@ -294,6 +303,7 @@ export function BookingAvailabilityPanel({
   startTime,
   endTime,
   equipment,
+  onWindowChange,
 }: BookingAvailabilityPanelProps): React.ReactElement {
   const canReadRooms = usePermission('room:read')
   const canReadEquipment = usePermission('equipment:read')
@@ -302,8 +312,20 @@ export function BookingAvailabilityPanel({
   const debouncedRoomId = useDebouncedValue(roomId, AVAILABILITY_DEBOUNCE_MS)
   const debouncedStartTime = useDebouncedValue(startTime, AVAILABILITY_DEBOUNCE_MS)
   const debouncedEndTime = useDebouncedValue(endTime, AVAILABILITY_DEBOUNCE_MS)
-  const settled = windowQuestion(debouncedRoomId, debouncedStartTime, debouncedEndTime)
+  // Memoized so its identity is stable while the debounced inputs are: the
+  // effect below reports it upward, and a fresh object every render would be a
+  // new identity every render — the parent would setState, re-render, and the
+  // effect would fire again, which is the loop React's update-depth limit
+  // catches.
+  const settled = useMemo(
+    () => windowQuestion(debouncedRoomId, debouncedStartTime, debouncedEndTime),
+    [debouncedRoomId, debouncedStartTime, debouncedEndTime],
+  )
   const pending = questionKey(roomId, question) !== questionKey(debouncedRoomId, settled)
+
+  useEffect(() => {
+    onWindowChange?.(settled)
+  }, [settled, onWindowChange])
   // The equipment lines are keyed by item and summed, so one item asked about
   // twice is one question — and the quantities are the *draft's*, so editing a
   // quantity re-reads nothing: the server's answer for that item and window has

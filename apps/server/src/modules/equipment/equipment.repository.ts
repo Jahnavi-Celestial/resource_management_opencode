@@ -25,10 +25,19 @@ export class EquipmentRepository {
     return this.em.getRepository(Equipment).findOne({ where: { id } })
   }
 
-  async insert(data: { name: string; quantityAvailable: number }): Promise<Equipment> {
+  async findByName(name: string): Promise<Equipment | null> {
+    return this.em
+      .getRepository(Equipment)
+      .createQueryBuilder('equipment')
+      .where('LOWER(equipment.name) = LOWER(:name)', { name })
+      .getOne()
+  }
+
+  async insert(data: { name: string; quantityAvailable: number; isActive: boolean }): Promise<Equipment> {
     const equipment = new Equipment()
     equipment.name = data.name
     equipment.quantityAvailable = data.quantityAvailable
+    equipment.isActive = data.isActive
     return this.em.getRepository(Equipment).save(equipment)
   }
 

@@ -226,6 +226,10 @@ async function main(): Promise<void> {
           login.login,
         )
       } catch {
+        // The welcome email's outbox row is addressed, not linked — it
+        // outlives the fixture employee, so clear it first or the dev
+        // server's cron sends it.
+        sql(dataSource, `DELETE FROM email_outbox WHERE to_email LIKE 'audit.fixture.%';`)
         sql(dataSource, `DELETE FROM employee WHERE id = '${employeeId}';`)
       }
     }

@@ -32,7 +32,7 @@ export class RoleResolver {
     @Ctx() context: GraphQLContext,
   ): Promise<RoleType> {
     const service = new RoleService(context.dataSource)
-    return toRoleType(await service.createRole(input.roleName))
+    return toRoleType(await service.createRole(input.roleName, input.permissionIds))
   }
 
   @Mutation(() => RoleType)

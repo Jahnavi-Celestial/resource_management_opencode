@@ -2,6 +2,7 @@ import { useState, type ChangeEvent, type FormEvent, type ReactNode } from 'reac
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Checkbox from '@mui/material/Checkbox'
+import Chip from '@mui/material/Chip'
 import Dialog from '@mui/material/Dialog'
 import DialogActions from '@mui/material/DialogActions'
 import DialogContent from '@mui/material/DialogContent'
@@ -18,7 +19,10 @@ import { groupKey, groupRows, initialGroupValues, removeGroupRow } from './group
 /**
  * The one form component. It is driven entirely by a field schema, so Employee,
  * Role, Room, Equipment and a booking (with its repeating equipment lines) share
- * this implementation rather than five near-copies.
+ * this implementation rather than five near-copies. The employee edit dialog is
+ * the one place a field holds several values at once (`multiselect`, its roles);
+ * every other field is a single value, which is what the scalar readers in
+ * `values.ts` assume.
  *
  * Three error sources land in the same place, deliberately:
  *   - client-side checks, so an empty required field does not cost a round trip;
@@ -49,6 +53,8 @@ function initialValues(fields: readonly FormField[], provided: FormValues | unde
     const given = provided?.[field.name]
     if (given !== undefined) {
       values[field.name] = given
+    } else if (field.type === 'multiselect') {
+      values[field.name] = []
     } else if (field.type === 'checkbox') {
       values[field.name] = false
     } else {
@@ -121,6 +127,18 @@ function validate(fields: readonly FormField[], values: FormValues): FieldErrors
     const value = values[field.name]
     if (field.type === 'checkbox') {
       if (field.required === true && value !== true) {
+        add(field.name, `${field.label} is required`)
+      }
+      continue
+    }
+    // `multiselect` is checked here, before the `String(value)` coercion below:
+    // that coercion would turn `['a', 'b']` into `'a,b'` and then measure
+    // `minLength`/`maxLength` against a joined string. An empty list is the
+    // "blank" state for this type, and `[]` is truthy, so it cannot be detected
+    // by the string path either.
+    if (field.type === 'multiselect') {
+      const selected = Array.isArray(value) ? value : []
+      if (field.required === true && selected.length === 0) {
         add(field.name, `${field.label} is required`)
       }
       continue
@@ -226,6 +244,12 @@ function submitValues(fields: readonly FormField[], values: FormValues): FormVal
     const value = values[field.name]
     if (field.type === 'checkbox') {
       out[field.name] = value === true
+      continue
+    }
+    // A `multiselect` value is already the list of option values the screen
+    // wants; the scalar coercion below would join it into one string.
+    if (field.type === 'multiselect') {
+      out[field.name] = Array.isArray(value) ? value : []
       continue
     }
     if (field.type === 'number') {
@@ -414,6 +438,51 @@ export function Form({
             onChange={(event: ChangeEvent<{ value: unknown }>) => setValue(name, String(event.target.value))}
           >
             {field.required !== true && <MenuItem value="">—</MenuItem>}
+            {(field.options ?? []).map((option) => (
+              <MenuItem key={option.value} value={option.value}>
+                {option.label}
+              </MenuItem>
+            ))}
+          </TextField>
+        </Box>
+      )
+    }
+
+    if (field.type === 'multiselect') {
+      const selected = Array.isArray(value) ? value : []
+      return (
+        <Box key={name} data-field={name} sx={{ mb: 2 }}>
+          <TextField
+            key={name}
+            {...textFieldProps}
+            select
+            value={selected}
+            onChange={(event: ChangeEvent<{ value: unknown }>) => {
+              const next = event.target.value
+              setValue(name, Array.isArray(next) ? next.map((item) => String(item)) : [])
+            }}
+            slotProps={{
+              select: {
+                multiple: true,
+                renderValue: (picked) => {
+                  const items = Array.isArray(picked) ? picked : []
+                  return (
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                      {items.map((item) => (
+                        <Chip
+                          key={item}
+                          size="small"
+                          label={
+                            (field.options ?? []).find((option) => option.value === item)?.label ?? item
+                          }
+                        />
+                      ))}
+                    </Box>
+                  )
+                },
+              },
+            }}
+          >
             {(field.options ?? []).map((option) => (
               <MenuItem key={option.value} value={option.value}>
                 {option.label}

@@ -184,6 +184,12 @@ async function cleanup(dataSource: DataSource): Promise<void> {
   await dataSource.query('DELETE FROM booking_equipment WHERE booking_id IN (SELECT id FROM booking WHERE purpose LIKE $1 OR purpose LIKE $2)', [`${BOOKING_PREFIX}%`, `${NFR_PREFIX}%`])
   await dataSource.query('DELETE FROM notification WHERE booking_id IN (SELECT id FROM booking WHERE purpose LIKE $1 OR purpose LIKE $2)', [`${BOOKING_PREFIX}%`, `${NFR_PREFIX}%`])
   await dataSource.query('DELETE FROM booking WHERE purpose LIKE $1 OR purpose LIKE $2', [`${BOOKING_PREFIX}%`, `${NFR_PREFIX}%`])
+  // Welcome-email outbox rows are addressed, not linked — they outlive the
+  // fixture employees, so clear them before the employees go.
+  await dataSource.query('DELETE FROM email_outbox WHERE to_email LIKE $1 OR to_email LIKE $2', [
+    `${FIXTURE_PREFIX}%`,
+    `${NFR_PREFIX}%`,
+  ])
   await dataSource.getRepository(Employee).delete([{ email: Like(`${FIXTURE_PREFIX}%`) }, { email: Like(`${NFR_PREFIX}%`) }])
   await dataSource.query('DELETE FROM meeting_room WHERE name LIKE $1', [`${ROOM_PREFIX}%`])
   await dataSource.query('DELETE FROM equipment WHERE name LIKE $1', [`${EQUIPMENT_PREFIX}%`])

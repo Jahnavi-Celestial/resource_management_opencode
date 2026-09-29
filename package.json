@@ -38,6 +38,7 @@
     "test:s10": "npm run test:s10 -w apps/server",
     "test:reports": "npm run test:reports -w apps/server",
     "test:s11": "npm run test:s11 -w apps/server",
+    "test:roles": "npm run test:roles -w apps/server",
     "test:c0": "npm run test:c0 -w apps/client",
     "test:c1": "npm run test:c1 -w apps/client",
     "test:c2": "npm run test:c2 -w apps/client",

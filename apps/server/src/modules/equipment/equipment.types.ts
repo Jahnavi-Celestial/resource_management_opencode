@@ -13,6 +13,16 @@ export class EquipmentType {
   @Field(() => Int)
   quantityAvailable!: number
 
+  /**
+   * What is free *right now*: `quantityAvailable` minus the quantity the
+   * PENDING/APPROVED bookings hold over this moment (FR-35's committed
+   * definition — the same one the booking form's availability panel asks
+   * about). Computed by the list query, so it is `null` everywhere else
+   * (create/update responses) where nobody asked.
+   */
+  @Field(() => Int, { nullable: true })
+  availableNow!: number | null
+
   @Field(() => Boolean)
   isActive!: boolean
 

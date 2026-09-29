@@ -33,6 +33,7 @@
     "test:s10": "tsx scripts/acceptance-s10.ts",
     "test:reports": "tsx src/modules/report/__tests__/reports.acceptance.ts",
     "test:s11": "tsx src/modules/report/__tests__/reports.acceptance.ts",
+    "test:roles": "tsx scripts/acceptance-roles.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

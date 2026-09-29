@@ -1,6 +1,7 @@
 import { Field, ID, Int, ObjectType } from 'type-graphql'
 import { Permission } from './permission.entity'
 import { Role } from './role.entity'
+import { isSystemRoleName } from './system-roles'
 
 @ObjectType('Role')
 export class RoleType {
@@ -10,6 +11,9 @@ export class RoleType {
   @Field(() => String)
   roleName!: string
 
+  @Field(() => Boolean)
+  isSystemRole!: boolean
+
   @Field(() => [PermissionType])
   permissions!: PermissionType[]
 }
@@ -18,6 +22,7 @@ export function toRoleType(role: Role): RoleType {
   const type = new RoleType()
   type.id = role.id
   type.roleName = role.roleName
+  type.isSystemRole = isSystemRoleName(role.roleName)
   return type
 }
 

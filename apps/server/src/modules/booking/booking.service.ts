@@ -7,6 +7,7 @@ import { NotFoundError } from '../../common/errors/not-found-error'
 import { InputValidationError } from '../../common/errors/field-errors'
 import { runInTransaction, type TransactionalEntityManager } from '../../common/db/transaction'
 import { isRoomAvailable, getEquipmentFreeQuantity } from './availability'
+import { Equipment } from '../equipment/equipment.entity'
 import { Booking } from './booking.entity'
 import { BookingEquipment } from './booking-equipment.entity'
 import { validateCreateBookingInput, type CreateBookingInput } from './booking.inputs'
@@ -221,6 +222,13 @@ export class BookingService {
       }
 
       for (const item of validatedInput.equipment ?? []) {
+        const equipment = await manager.getRepository(Equipment).findOne({ where: { id: item.equipmentId } })
+        if (equipment === null) {
+          throw new NotFoundError(`Equipment ${item.equipmentId} was not found`)
+        }
+        if (!equipment.isActive) {
+          throw new DomainError(`Cannot create booking: equipment "${equipment.name}" is inactive`)
+        }
         const freeQuantity = await getEquipmentFreeQuantity(manager, item.equipmentId, startTime, endTime)
         if (item.quantity > freeQuantity) {
           throw new ConflictError(
@@ -340,8 +348,12 @@ export class BookingService {
     })
   }
 
-  async pendingQueue(pagination: PaginationArgs, sort: SortInput | null | undefined): Promise<BookingPage> {
-    return this.repository.findPendingOrdered(this.dataSource.manager, pagination, sort)
+  async pendingQueue(
+    pagination: PaginationArgs,
+    search: string | null | undefined,
+    sort: SortInput | null | undefined,
+  ): Promise<BookingPage> {
+    return this.repository.findPendingOrdered(this.dataSource.manager, pagination, search, sort)
   }
 
   async approveBooking(managerId: string, bookingId: string): Promise<Booking> {

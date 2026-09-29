@@ -357,9 +357,13 @@ export class BookingResolver {
   async pendingQueue(
     @Ctx() context: GraphQLContext,
     @Args(() => PageArgs) pagination: PageArgs,
+    @Arg('search', () => String, { nullable: true }) search: string | null,
+    @Arg('sort', () => SortInput, { nullable: true }) sort: SortInput | null,
   ): Promise<Paginated<Booking>> {
     const service = new BookingService(context.dataSource)
-    return service.pendingQueue(pagination, { field: 'createdAt', direction: 'ASC' })
+    // Newest first unless the caller picks a column: the queue is a work list,
+    // and the newest request is the one a manager has not seen yet.
+    return service.pendingQueue(pagination, search, sort ?? { field: 'createdAt', direction: 'DESC' })
   }
 
   @Mutation(() => BookingType)

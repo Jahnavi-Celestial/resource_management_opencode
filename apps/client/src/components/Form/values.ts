@@ -35,6 +35,18 @@ export function booleanValue(values: FormValues, name: string): boolean {
   return values[name] === true
 }
 
+/**
+ * A `multiselect` field's chosen option values, in the order they were picked.
+ *
+ * Deliberately not `textValue`: that reader coerces with `String(value)`, which
+ * would hand back `'a,b'` for a two-role selection and silently corrupt the
+ * screen's diff against the roles the employee already has.
+ */
+export function stringListValue(values: FormValues, name: string): string[] {
+  const value = values[name]
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
+
 /** An optional text input: omitted from the mutation when left blank. */
 export function optionalTextValue(values: FormValues, name: string): string | undefined {
   const value = values[name]

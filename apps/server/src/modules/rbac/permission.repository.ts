@@ -1,4 +1,5 @@
 import type { EntityManager } from 'typeorm'
+import { isUuid } from '../../common/db/uuid'
 import { Permission } from './permission.entity'
 import { RolePermission } from './role-permission.entity'
 
@@ -7,6 +8,20 @@ export class PermissionRepository {
 
   async findById(id: string): Promise<Permission | null> {
     return this.em.getRepository(Permission).findOne({ where: { id } })
+  }
+
+  /**
+   * Batch lookup by id, skipping non-uuid ids the way `findById` does so a
+   * malformed id surfaces as "not found" rather than a Postgres uuid-syntax
+   * error. Used by the atomic role-create, which must validate every grant
+   * before writing any.
+   */
+  async findByIds(ids: readonly string[]): Promise<Permission[]> {
+    const uuids = ids.filter((id) => isUuid(id))
+    if (uuids.length === 0) return []
+    return this.em.getRepository(Permission).find({
+      where: uuids.map((id) => ({ id })),
+    })
   }
 
   async findByName(permissionName: string): Promise<Permission | null> {

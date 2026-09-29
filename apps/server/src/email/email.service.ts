@@ -4,8 +4,10 @@ import { EmailOutbox } from './email-outbox.entity'
 import type {
   BookingEmailData,
   BookingEmailDataInput,
+  EmailDataFor,
   EmailEnqueueInput,
   EmailTemplate,
+  EmployeeWelcomeEmailDataInput,
   OutboxRecord,
 } from './email.types'
 import { toOutboxRecord } from './email.types'
@@ -14,12 +16,14 @@ const TEMPLATE_SUBJECTS: Record<EmailTemplate, (data: BookingEmailData) => strin
   BOOKING_APPROVED: (data) => `Your booking "${headerSafe(data.purpose)}" was approved`,
   BOOKING_REJECTED: (data) => `Your booking "${headerSafe(data.purpose)}" was rejected`,
   BOOKING_REMINDER: (data) => `Reminder: your booking "${headerSafe(data.purpose)}" is coming up`,
+  EMPLOYEE_WELCOME: () => 'Your account credentials',
 }
 
 const TEMPLATE_INTROS: Record<EmailTemplate, string> = {
   BOOKING_APPROVED: 'A manager approved your booking request.',
   BOOKING_REJECTED: 'A manager rejected your booking request.',
   BOOKING_REMINDER: 'This is a reminder about your upcoming booking.',
+  EMPLOYEE_WELCOME: 'An administrator created an account for you. Your login credentials are below.',
 }
 
 function escapeHtml(value: string): string {
@@ -46,23 +50,16 @@ function window_(data: BookingEmailData): string {
   return `${data.startTime} to ${data.endTime}`
 }
 
-/**
- * Renders at enqueue time, not at send time: the stored row is then a faithful
- * record of exactly what the user was promised, and the dispatcher stays a dumb
- * pipe. Every interpolated value is escaped — `purpose` and `reason` are
- * user-supplied free text.
- */
-function render(template: EmailTemplate, data: BookingEmailData & { reason?: string }): { subject: string; html: string } {
-  const subject = TEMPLATE_SUBJECTS[template](data)
+function bookingHtml(intro: string, data: BookingEmailData & { reason?: string }): string {
   const reason =
-    template === 'BOOKING_REJECTED' && data.reason !== undefined && data.reason !== ''
+    data.reason !== undefined && data.reason !== ''
       ? `<p><strong>Reason:</strong> ${escapeHtml(data.reason)}</p>`
       : ''
-  const html = `<!doctype html>
+  return `<!doctype html>
 <html>
   <body style="font-family: sans-serif">
     <p>Hello ${escapeHtml(data.employeeName)},</p>
-    <p>${escapeHtml(TEMPLATE_INTROS[template])}</p>
+    <p>${escapeHtml(intro)}</p>
     <ul>
       <li><strong>Purpose:</strong> ${escapeHtml(data.purpose)}</li>
       <li><strong>Room:</strong> ${escapeHtml(data.roomName)}</li>
@@ -71,7 +68,45 @@ function render(template: EmailTemplate, data: BookingEmailData & { reason?: str
     ${reason}
   </body>
 </html>`
-  return { subject, html }
+}
+
+function welcomeHtml(intro: string, data: BookingEmailData & { email: string; password: string }): string {
+  return `<!doctype html>
+<html>
+  <body style="font-family: sans-serif">
+    <p>Hello ${escapeHtml(data.employeeName)},</p>
+    <p>${escapeHtml(intro)}</p>
+    <ul>
+      <li><strong>Email:</strong> ${escapeHtml(data.email)}</li>
+      <li><strong>Password:</strong> ${escapeHtml(data.password)}</li>
+    </ul>
+  </body>
+</html>`
+}
+
+// `any` is deliberate: each template renders a different data shape, and the
+// per-template functions above are the real type boundary — `render` is only
+// ever called with the data its caller declared for that template. The intro
+// is passed in rather than looked up from `data.template` because the data
+// half of the union does not carry the template name.
+const TEMPLATE_HTML: Record<EmailTemplate, (intro: string, data: any) => string> = {
+  BOOKING_APPROVED: bookingHtml,
+  BOOKING_REJECTED: bookingHtml,
+  BOOKING_REMINDER: bookingHtml,
+  EMPLOYEE_WELCOME: welcomeHtml,
+}
+
+/**
+ * Renders at enqueue time, not at send time: the stored row is then a faithful
+ * record of exactly what the user was promised, and the dispatcher stays a dumb
+ * pipe. Every interpolated value is escaped — `purpose`, `reason` and the
+ * welcome password are free text.
+ */
+function render(template: EmailTemplate, data: EmailDataFor<EmailTemplate>): { subject: string; html: string } {
+  return {
+    subject: TEMPLATE_SUBJECTS[template](data as BookingEmailData),
+    html: TEMPLATE_HTML[template](TEMPLATE_INTROS[template], data),
+  }
 }
 
 /**
@@ -92,7 +127,7 @@ export class EmailService {
     manager: EntityManager,
     employeeId: string,
     template: EmailTemplate,
-    data: BookingEmailDataInput,
+    data: BookingEmailDataInput | EmployeeWelcomeEmailDataInput,
   ): Promise<OutboxRecord | null> {
     const employee = await manager.getRepository(Employee).findOneBy({ id: employeeId })
     if (employee === null) {

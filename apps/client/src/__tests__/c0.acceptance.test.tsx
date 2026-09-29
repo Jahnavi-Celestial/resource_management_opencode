@@ -280,13 +280,10 @@ describe('C0 — client foundation', () => {
     expect(probe().dataset.roles).toBe('["Admin"]')
     expect(JSON.parse(probe().dataset.permissions ?? '[]')).toEqual([
       'audit:read',
-      'booking:approve',
       'booking:cancel:any',
       'booking:cancel:own',
-      'booking:create',
       'booking:read:all',
       'booking:read:own',
-      'booking:reject',
       'employee:read',
       'employee:write',
       'equipment:read',
@@ -300,11 +297,15 @@ describe('C0 — client foundation', () => {
       'room:write',
     ])
 
-    // The UI is driven by that set: the admin sees every nav item.
-    // Nine with the C3 notification bell; the count is deliberate so a
-    // nav item cannot be added without this number moving.
+    // The UI is driven by that set. The admin no longer holds the approval
+    // permissions — approving and rejecting is the Manager's job — so the
+    // Approvals nav item is hidden from them, and no longer holds
+    // `booking:create` either, so the Bookings screen offers them no
+    // New booking button. Eight with the C3 notification bell; the count is
+    // deliberate so a nav item cannot be added without this number moving.
     const nav = screen.getByTestId('nav')
-    expect(within(nav).getAllByRole('listitem')).toHaveLength(9)
+    expect(within(nav).getAllByRole('listitem')).toHaveLength(8)
+    expect(within(nav).queryByTestId('nav-approvals')).not.toBeInTheDocument()
     expect(screen.getByTestId('current-user-email')).toHaveTextContent(envValue('ADMIN_EMAIL'))
     expect(screen.getByTestId('role-Admin')).toBeInTheDocument()
     view.unmount()

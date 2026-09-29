@@ -4,7 +4,7 @@ import { hashPassword, verifyPassword } from '../../auth/password'
 import { Employee } from '../../modules/employee/employee.entity'
 import { Role } from '../../modules/rbac/role.entity'
 import { UserRole } from '../../modules/rbac/user-role.entity'
-import { ADMIN_ROLE_NAME } from './roles.seed'
+import { ADMIN_ROLE_NAME } from '../../modules/rbac/system-roles'
 
 export async function seedAdmin(dataSource: DataSource): Promise<void> {
   const { email, password } = loadEnv().admin

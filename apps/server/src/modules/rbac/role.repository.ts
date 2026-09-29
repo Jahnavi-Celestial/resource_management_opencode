@@ -8,8 +8,17 @@ export class RoleRepository {
     return this.em.getRepository(Role).findOne({ where: { id } })
   }
 
+  /**
+   * Case-insensitive lookup, matching the LOWER(role_name) unique index from
+   * migration 1790176946849. `Admin`, `admin` and `ADMIN` are one role, so a
+   * duplicate check built on this cannot be bypassed by re-casing the name.
+   */
   async findByName(roleName: string): Promise<Role | null> {
-    return this.em.getRepository(Role).findOne({ where: { roleName } })
+    return this.em
+      .getRepository(Role)
+      .createQueryBuilder('role')
+      .where('LOWER(role.roleName) = LOWER(:roleName)', { roleName })
+      .getOne()
   }
 
   async list(page: number, pageSize: number): Promise<{ items: Role[]; total: number }> {

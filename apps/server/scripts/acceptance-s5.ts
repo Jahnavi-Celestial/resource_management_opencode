@@ -199,6 +199,10 @@ async function cleanup(
     sql(dataSource, `DELETE FROM meeting_room WHERE id = '${roomId}';`)
   }
   if (employeeId !== undefined) {
+    // The welcome email's outbox row is addressed, not linked — it outlives
+    // the fixture employee, so clear it first or the dev server's cron
+    // sends it.
+    sql(dataSource, `DELETE FROM email_outbox WHERE to_email LIKE 's5.fixture.%';`)
     sql(dataSource, `DELETE FROM employee WHERE id = '${employeeId}';`)
   }
   const ids = {
@@ -337,9 +341,18 @@ async function main(): Promise<void> {
       { action: 'APPROVE', page: 1, pageSize: 20 },
       token,
     )
-    assert.equal(approveResult.auditLogs.totalCount, 1)
-    assert.equal(approveResult.auditLogs.items[0]?.id, committedIds[1])
-    assert.equal(approveResult.auditLogs.items[0]?.action, 'APPROVE')
+    // The action filter is global, so the count is a fact about the whole
+    // table: compare it to the count the database computes, not to a literal.
+    const [approveTotal] = await dataSource.query('SELECT count(*)::int AS c FROM audit_log WHERE action = $1', ['APPROVE'])
+    assert.equal(approveResult.auditLogs.totalCount, approveTotal.c)
+    // The suite's own row is asserted by membership in test 1's booking-scoped
+    // query; a global, unordered page of 20 out of the table's whole APPROVE
+    // history cannot promise it is on page 1. What this filter can promise is
+    // homogeneity: every row it returns is an APPROVE.
+    assert.ok(
+      approveResult.auditLogs.items.every((item) => item.action === 'APPROVE'),
+      'every row in the action-filtered page is an APPROVE',
+    )
 
     const statusQuery = `query AuditByStatus($status: BookingStatus!, $page: Int!, $pageSize: Int!) { auditLogs(status: $status, page: $page, pageSize: $pageSize) { totalCount items { ${fields} } } }`
     const approvedResult = await rawGraphql<{ auditLogs: AuditPage }>(
@@ -348,7 +361,10 @@ async function main(): Promise<void> {
       { status: 'APPROVED', page: 1, pageSize: 20 },
       token,
     )
-    assert.equal(approvedResult.auditLogs.totalCount, 1)
+    // Global status filters: DB-computed counts, for the same reason as the
+    // action filter above.
+    const [approvedTotal] = await dataSource.query('SELECT count(*)::int AS c FROM audit_log WHERE new_status = $1', ['APPROVED'])
+    assert.equal(approvedResult.auditLogs.totalCount, approvedTotal.c)
     assert.equal(approvedResult.auditLogs.items[0]?.oldStatus, 'PENDING')
     assert.equal(approvedResult.auditLogs.items[0]?.newStatus, 'APPROVED')
     const pendingResult = await rawGraphql<{ auditLogs: AuditPage }>(
@@ -357,7 +373,8 @@ async function main(): Promise<void> {
       { status: 'PENDING', page: 1, pageSize: 20 },
       token,
     )
-    assert.equal(pendingResult.auditLogs.totalCount, 1)
+    const [pendingTotal] = await dataSource.query('SELECT count(*)::int AS c FROM audit_log WHERE new_status = $1', ['PENDING'])
+    assert.equal(pendingResult.auditLogs.totalCount, pendingTotal.c)
     assert.equal(pendingResult.auditLogs.items[0]?.oldStatus, null)
     assert.equal(pendingResult.auditLogs.items[0]?.newStatus, 'PENDING')
 

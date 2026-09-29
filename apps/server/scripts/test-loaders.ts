@@ -102,8 +102,8 @@ async function test3RolePermissionsLoaderBatches(
   const names = adminPermissions.map((permission) => permission.permissionName)
   const sorted = names.every((name, index) => index === 0 || (names[index - 1] ?? '') <= name)
   check(
-    'Admin resolves its full seeded permission set (19), name-ascending like listForRole',
-    adminPermissions.length === 19 && sorted,
+    'Admin resolves its full seeded permission set (16 — the catalogue minus booking:approve/reject/create), name-ascending like listForRole',
+    adminPermissions.length === 16 && sorted,
     `admin permissions=${String(adminPermissions.length)}, first=${String(names[0])}, last=${String(names[names.length - 1])}`,
   )
   check(

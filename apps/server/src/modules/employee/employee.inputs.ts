@@ -34,6 +34,13 @@ export class CreateEmployeeInput {
   @MinLength(EMPLOYEE_PASSWORD_MIN_LENGTH, { message: 'Password must be at least 8 characters long' })
   @MaxLength(EMPLOYEE_PASSWORD_MAX_LENGTH, { message: 'Password must be at most 72 characters long' })
   password!: string
+
+  // Optional so every existing caller (seeds, fixtures, raw mutations) keeps
+  // working; the create form always sends it, defaulted to the Employee role.
+  @Field(() => ID, { nullable: true })
+  @IsOptional()
+  @IsUUID()
+  roleId?: string
 }
 
 @InputType()

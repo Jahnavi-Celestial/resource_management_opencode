@@ -26,6 +26,15 @@ export class RoomRepository {
     return this.em.getRepository(MeetingRoom).findOne({ where: { id } })
   }
 
+  async findByNameAndLocation(name: string, location: string): Promise<MeetingRoom | null> {
+    return this.em
+      .getRepository(MeetingRoom)
+      .createQueryBuilder('room')
+      .where('LOWER(room.name) = LOWER(:name)', { name })
+      .andWhere('LOWER(room.location) = LOWER(:location)', { location })
+      .getOne()
+  }
+
   async insert(data: { name: string; location: string; capacity: number }): Promise<MeetingRoom> {
     const room = new MeetingRoom()
     room.name = data.name

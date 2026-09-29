@@ -7,6 +7,7 @@ import {
   adminToken,
   bootServer,
   envValue,
+  clearOutboxFor,
   gql,
   lastRequest,
   newClient,
@@ -153,24 +154,26 @@ let otherRoomId = ''
 let projectorId = ''
 let cameraId = ''
 
-/** The admin's own name parts, read from `me` rather than hardcoded. */
-let adminFirst = ''
-let adminLast = ''
+/** The manager's own name parts, read from `me` rather than hardcoded. */
+let managerFirst = ''
+let managerLast = ''
 
 /**
- * What the screen is expected to show for the admin — computed by the same
+ * What the screen is expected to show for the manager — computed by the same
  * function the screen uses, from the same payload. A test that hardcoded the
  * joined string here would let a screen with its own formatting pass.
  */
-function adminDisplayName(): string {
-  return displayName({ firstName: adminFirst, lastName: adminLast })
+function managerDisplayName(): string {
+  return displayName({ firstName: managerFirst, lastName: managerLast })
 }
 
 let requesterEmail = ''
 let requesterToken = ''
 let bystanderEmail = ''
 let bystanderToken = ''
-/** Deleted in `beforeAll` (FR-7), so its booking and audit rows lose their person. */
+let managerEmail = ''
+let managerToken = ''
+/** Deleted in `beforeAll` (FR-7), so its booking and audit rows lose its person. */
 let doomedEmail = ''
 
 /** Cancelled overlap: occupies the room in time, commits nothing. */
@@ -222,17 +225,38 @@ async function employeeRoleId(): Promise<string> {
   return role.id
 }
 
+async function managerRoleId(): Promise<string> {
+  const roles = await gql<{ roles: { items: { id: string; roleName: string }[] } }>(
+    `query { roles { items { id roleName } } }`,
+    {},
+    adminToken,
+  )
+  const role = roles.roles.items.find((item) => item.roleName === 'Manager')
+  if (role === undefined) {
+    throw new Error('seeded Manager role is missing')
+  }
+  return role.id
+}
+
 beforeAll(async () => {
   await bootServer()
   const roleId = await employeeRoleId()
+  const mgrRoleId = await managerRoleId()
+
+  // The admin no longer holds the approval permissions — deciding bookings is
+  // the Manager's job — so every decision in this suite is made by a manager.
+  managerEmail = `${TOKEN}manager@resource.local`
+  const managerId = await createEmployee('Mona', 'Manager', managerEmail)
+  await gql(ASSIGN_ROLE, { input: { employeeId: managerId, roleId: mgrRoleId } }, adminToken)
+  managerToken = await login(managerEmail)
 
   const me = await gql<{ me: { employee: { firstName: string; lastName: string } } }>(
     `query { me { employee { firstName lastName } } }`,
     {},
-    adminToken,
+    managerToken,
   )
-  adminFirst = me.me.employee.firstName
-  adminLast = me.me.employee.lastName
+  managerFirst = me.me.employee.firstName
+  managerLast = me.me.employee.lastName
 
   roomId = (
     await gql<{ createRoom: { id: string } }>(
@@ -318,7 +342,7 @@ beforeAll(async () => {
     numberOfAttendees: 2,
     equipment: [{ equipmentId: cameraId, quantity: 2 }],
   })
-  await gql(APPROVE_BOOKING, { id: approvedId }, adminToken)
+  await gql(APPROVE_BOOKING, { id: approvedId }, managerToken)
 
   rejectedId = await createBooking(requesterToken, {
     roomId,
@@ -327,7 +351,7 @@ beforeAll(async () => {
     purpose: `${TOKEN}rejected-purpose`,
     numberOfAttendees: 3,
   })
-  await gql(REJECT_BOOKING, { input: { id: rejectedId, reason: REJECTION_REASON } }, adminToken)
+  await gql(REJECT_BOOKING, { input: { id: rejectedId, reason: REJECTION_REASON } }, managerToken)
 
   laterId = await createBooking(requesterToken, {
     roomId,
@@ -345,8 +369,8 @@ beforeAll(async () => {
     numberOfAttendees: 2,
   })
   // Approved *before* the deletion, so the history holds two actors: the one
-  // about to be hard-deleted, and the admin. One renderer, two payloads.
-  await gql(APPROVE_BOOKING, { id: doomedId }, adminToken)
+  // about to be hard-deleted, and the manager. One renderer, two payloads.
+  await gql(APPROVE_BOOKING, { id: doomedId }, managerToken)
   await gql(DELETE_EMPLOYEE, { id: doomedIdEmployee }, adminToken)
 }, 180_000)
 
@@ -362,6 +386,11 @@ afterAll(() => {
 })
 
 afterAll(async () => {
+  // Welcome-email outbox rows are addressed, not linked — they outlive the
+  // fixture employees, so clear them by address before the employees go.
+  await clearOutboxFor([managerEmail, requesterEmail, bystanderEmail, doomedEmail]).catch(
+    () => undefined,
+  )
   for (const id of createdEmployeeIds) {
     await gql(DELETE_EMPLOYEE, { id }, adminToken).catch(() => undefined)
   }
@@ -452,7 +481,7 @@ describe('C2 — booking detail (FR-45–49)', () => {
     expect(processedAt).not.toBe('')
     expect(Number.isNaN(new Date(processedAt).getTime())).toBe(false)
     expect(new Date(processedAt).getTime()).toBeGreaterThanOrEqual(new Date(requestedAt).getTime())
-    expect(screen.getByTestId('processed-by')).toHaveTextContent(adminDisplayName())
+    expect(screen.getByTestId('processed-by')).toHaveTextContent(managerDisplayName())
     // Nothing was rejected, so there is no reason to show.
     expect(screen.queryByTestId('rejection-reason')).not.toBeInTheDocument()
 
@@ -464,7 +493,7 @@ describe('C2 — booking detail (FR-45–49)', () => {
     const rejectedView = await openDetailAsAdmin(rejectedId)
     await screen.findByTestId('booking-detail')
     expect(screen.getByTestId('booking-detail-status')).toHaveTextContent('REJECTED')
-    expect(screen.getByTestId('processed-by')).toHaveTextContent(adminDisplayName())
+    expect(screen.getByTestId('processed-by')).toHaveTextContent(managerDisplayName())
     expect(screen.getByTestId('rejection-reason')).toHaveTextContent(REJECTION_REASON)
     expect(screen.getByTestId('processed-at').textContent ?? '').not.toBe('')
     rejectedView.unmount()
@@ -493,7 +522,7 @@ describe('C2 — booking detail (FR-45–49)', () => {
     )
     expect(screen.getByTestId('transition-1-old')).toHaveTextContent('PENDING')
     expect(screen.getByTestId('transition-1-new')).toHaveTextContent('APPROVED')
-    expect(screen.getByTestId('transition-1-actor')).toHaveTextContent(adminDisplayName())
+    expect(screen.getByTestId('transition-1-actor')).toHaveTextContent(managerDisplayName())
 
     // NFR-8: no gaps, and the order is the server's (oldest first).
     const createdAt = new Date(screen.getByTestId('transition-0-at').textContent ?? '').getTime()
@@ -512,7 +541,7 @@ describe('C2 — booking detail (FR-45–49)', () => {
     await screen.findByTestId('status-history-table')
     expect(screen.getAllByTestId(/^transition-\d+$/)).toHaveLength(2)
     expect(screen.getByTestId('transition-1-new')).toHaveTextContent('REJECTED')
-    expect(screen.getByTestId('transition-1-actor')).toHaveTextContent(adminDisplayName())
+    expect(screen.getByTestId('transition-1-actor')).toHaveTextContent(managerDisplayName())
     rejectedView.unmount()
   })
 
@@ -536,8 +565,8 @@ describe('C2 — booking detail (FR-45–49)', () => {
     // the one that approved it — one renderer, two payloads, two answers. A screen
     // with its own hardcoded fallback could not produce this difference.
     expect(screen.getByTestId('transition-0-actor')).toHaveTextContent(deletedName)
-    expect(screen.getByTestId('transition-1-actor')).toHaveTextContent(adminDisplayName())
-    expect(screen.getByTestId('processed-by')).toHaveTextContent(adminDisplayName())
+    expect(screen.getByTestId('transition-1-actor')).toHaveTextContent(managerDisplayName())
+    expect(screen.getByTestId('processed-by')).toHaveTextContent(managerDisplayName())
 
     // The proof that the string came out of the function: in this one render the
     // wrapper was called with a record carrying no name parts *and* with the

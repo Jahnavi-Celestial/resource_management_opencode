@@ -20,6 +20,11 @@ export class CreateEquipmentInput {
   @IsInt()
   @Min(EQUIPMENT_MIN_QUANTITY, { message: 'Quantity available must be 0 or greater' })
   quantityAvailable!: number
+
+  @Field(() => Boolean, { nullable: true })
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean
 }
 
 @InputType()

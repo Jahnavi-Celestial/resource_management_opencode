@@ -27,6 +27,23 @@ export const EmployeesDocument = graphql(/* GraphQL */ `
   }
 `)
 
+/**
+ * Every role in the system, for the create form's dropdown. The role set is
+ * small (seeded, rarely extended) and the form needs all of it, so one page
+ * at the maximum page size is the whole table.
+ */
+export const EmployeeRolesDocument = graphql(/* GraphQL */ `
+  query EmployeeRoles($page: Int!, $pageSize: Int!) {
+    roles(page: $page, pageSize: $pageSize) {
+      total
+      items {
+        id
+        roleName
+      }
+    }
+  }
+`)
+
 export const CreateEmployeeDocument = graphql(/* GraphQL */ `
   mutation CreateEmployee($input: CreateEmployeeInput!) {
     createEmployee(input: $input) {
@@ -48,5 +65,32 @@ export const UpdateEmployeeDocument = graphql(/* GraphQL */ `
 export const DeleteEmployeeDocument = graphql(/* GraphQL */ `
   mutation DeleteEmployee($id: String!) {
     deleteEmployee(id: $id)
+  }
+`)
+
+/**
+ * The two halves of the edit dialog's role editor. The server already exposes
+ * them (`rbac.resolver.ts`, gated by `role:assign`), so the client needs no new
+ * operation — only a typed document for each.
+ *
+ * They are separate mutations on purpose: the screen diffs the selection against
+ * the roles the employee already has and applies only the difference, so a
+ * two-role edit is one `assign` and one `remove` rather than a wholesale
+ * replacement. The server's own lockout guard (`assertRoleRemovableFromEmployee`)
+ * rides along on every `remove` for free.
+ */
+export const AssignEmployeeRoleDocument = graphql(/* GraphQL */ `
+  mutation AssignEmployeeRole($input: EmployeeRoleInput!) {
+    assignRoleToEmployee(input: $input) {
+      id
+    }
+  }
+`)
+
+export const RemoveEmployeeRoleDocument = graphql(/* GraphQL */ `
+  mutation RemoveEmployeeRole($input: EmployeeRoleInput!) {
+    removeRoleFromEmployee(input: $input) {
+      id
+    }
   }
 `)

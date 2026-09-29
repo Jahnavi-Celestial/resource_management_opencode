@@ -27,8 +27,9 @@ import {
  * decisions (FR-50–56), against a real server and the app that ships.
  *
  * The six claims are the requirements' own:
- *   1. the queue lists only PENDING requests, in the order the server fixed, and
- *      the screen adds no ordering of its own (FR-50);
+ *   1. the queue lists only PENDING requests, newest-first by default, with a
+ *      working search and sortable columns wired to the server's own arguments
+ *      (FR-50);
  *   2. approving transitions the booking to APPROVED and the screen shows the
  *      server's own answer (FR-51/52);
  *   3. a rejection reason the server considers too short is refused, and the
@@ -44,14 +45,13 @@ import {
  * Four things about *how* it is written, each a trap this shared development
  * database sets:
  *
- * - **The queue is global and unsearchable.** `pendingQueue` takes no `search`
- *   and no `filter`, so a client cannot scope it, and it is ordered oldest-first
- *   — which in a database that every client suite has added PENDING bookings to
- *   means this run's fixtures are never on page 1. So the UI half of test 1 goes
- *   to the *last* page (the newest rows) and the whole-queue half walks every
- *   page. No assertion anywhere compares a count to a literal: see the
- *   "no global count" rule in AGENTS.md, which three server suites had to be
- *   rescoped for.
+ * - **The queue is global.** `pendingQueue` takes no `filter`, so a client cannot
+ *   scope it, and it is ordered newest-first by default — which in a database that
+ *   every client suite has added PENDING bookings to means this run's fixtures
+ *   are never on page 1. So the UI half of test 1 goes to the *last* page (the
+ *   newest rows) and the whole-queue half walks every page. No assertion anywhere
+ *   compares a count to a literal: see the "no global count" rule in AGENTS.md,
+ *   which three server suites had to be rescoped for.
  * - **Row controls are found within their own row.** Every page holds up to a
  *   hundred rows and each one has its own Approve/Reject buttons, so
  *   `getByTestId('row-approve')` would be ambiguous — the row is located by the
@@ -459,33 +459,69 @@ async function openQueueAs(
 }
 
 describe('C2 — approval queue and decisions (FR-50–56)', () => {
-  it('1. shows only PENDING requests, in the order the server fixed, and sorts nothing itself', async () => {
+  it('1. shows only PENDING requests, newest-first, with search and sortable columns', async () => {
     const view = await openQueueAs(managerEmail, PASSWORD)
     const firstRequest = await waitForRequest('PendingQueue', (variables) => variables['page'] === 1)
 
-    // `pendingQueue` accepts page and pageSize only. A screen that sent a search,
-    // a filter or a sort would be refused by the schema, and one that *hid* them
-    // locally would be filtering a page of a server-paginated set — so the
-    // request is asserted to be exactly the two arguments the endpoint has.
-    expect(Object.keys(firstRequest.variables).sort()).toEqual(['page', 'pageSize'])
-    // …and no search box, because there is nothing to search.
-    expect(screen.queryByPlaceholderText(/search/i)).not.toBeInTheDocument()
+    // The screen sends the arguments the endpoint has: page, pageSize, and the
+    // default sort (newest-first) from its initial table state. No filter — the
+    // queue takes none.
+    expect(Object.keys(firstRequest.variables).sort()).toEqual(['page', 'pageSize', 'sort'])
+    expect(firstRequest.variables['sort']).toEqual({ field: 'createdAt', direction: 'DESC' })
+    // …and a search box, because the queue can be searched.
+    expect(screen.getByTestId('table-search')).toBeInTheDocument()
 
-    // No column is sortable, so no header offers to sort. If one did, clicking it
-    // would either put a `sort` the server refuses into the variables or — worse
-    // — reorder the page locally and call it the queue.
+    // Sorting is the server's, not the page's: clicking a header puts a `sort`
+    // into the variables, and the rows that come back are the server's order.
     const before = recorded.length
     await userEvent.setup().click(screen.getByRole('columnheader', { name: /requested from/i }))
+    const sortRequest = await waitForRequest(
+      'PendingQueue',
+      (variables) => (variables['sort'] as { field?: string } | undefined)?.['field'] === 'startTime',
+    )
+    expect(sortRequest.variables['sort']).toEqual({ field: 'startTime', direction: 'ASC' })
+    expect(recorded.slice(before).length).toBeGreaterThanOrEqual(1)
+
+    // Search reaches the server as a variable after the table's debounce, and
+    // the rows that come back are the server's filtered answer.
+    const searchBox = screen.getByTestId('table-search')
+    await userEvent.setup().type(searchBox, `${TOKEN}approve-me`)
+    const searchRequest = await waitForRequest(
+      'PendingQueue',
+      (variables) => variables['search'] === `${TOKEN}approve-me`,
+    )
+    expect(searchRequest.variables['search']).toBe(`${TOKEN}approve-me`)
+    await waitFor(() => {
+      for (const row of screen.getAllByRole('row').slice(1)) {
+        expect(row).toHaveTextContent(`${TOKEN}approve-me`)
+      }
+    })
+    // Clearing the search puts the whole queue back. No request is waited for
+    // here: the cleared variables are exactly the sort-click request's, which the
+    // server has already answered, so Apollo serves them from the cache and
+    // nothing reaches the wire. The observable is the rendered total.
+    await userEvent.setup().clear(searchBox)
+    await waitFor(() => {
+      expect(screen.getByTestId('table-total')).not.toHaveTextContent('1 total')
+    })
+
+    // Restore the default order (newest-first). The header click above left the
+    // grid sorted by start time, which scatters this run's fixtures across pages
+    // — and the two `showRow` calls below would then land on different pages, the
+    // second navigating away and detaching the row the first one returned.
+    // The second click's variables are the initial request's, already answered,
+    // so no request is waited for — the header's own sort indicator is the
+    // observable.
+    const createdHeader = screen.getByRole('columnheader', { name: /^created/i })
+    await userEvent.setup().click(createdHeader)
     await new Promise((resolve) => setTimeout(resolve, 700))
-    expect(
-      recorded
-        .slice(before)
-        .filter((entry) => entry.operationName === 'PendingQueue')
-        .filter((entry) => 'sort' in entry.variables),
-    ).toEqual([])
+    await userEvent.setup().click(createdHeader)
+    await waitFor(() => {
+      expect(screen.getByRole('columnheader', { name: /^created/i })).toHaveAttribute('aria-sort', 'descending')
+    })
 
     // The server's own queue, walked in full: this run's PENDING requests are in
-    // it, the two already-decided ones are not, and it is oldest-first.
+    // it, the two already-decided ones are not, and it is newest-first.
     const queue = await walkQueue(managerToken)
     const ids = queue.map((item) => item.id)
     for (const pending of [pendingApproveId, pendingShortReasonId, pendingRejectId, pendingSelfId]) {
@@ -498,8 +534,8 @@ describe('C2 — approval queue and decisions (FR-50–56)', () => {
     for (let index = 1; index < createdAts.length; index += 1) {
       expect(
         createdAts[index] ?? 0,
-        'the queue is not oldest-first',
-      ).toBeGreaterThanOrEqual(createdAts[index - 1] ?? 0)
+        'the queue is not newest-first',
+      ).toBeLessThanOrEqual(createdAts[index - 1] ?? 0)
     }
 
     // The screen's own rows: two of this run's requests, each PENDING, with the

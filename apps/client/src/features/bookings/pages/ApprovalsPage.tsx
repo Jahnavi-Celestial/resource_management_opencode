@@ -12,6 +12,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { DataTable } from '@/components/DataTable'
 import { INITIAL_TABLE_STATE, type DataTableColumn, type TableState } from '@/components/DataTable/types'
 import { Form } from '@/components/Form'
+import { Notice } from '@/components/Notice'
 import type { FormField, FormValues } from '@/components/Form/types'
 import { textValue } from '@/components/Form/values'
 import { usePermission } from '@/auth/usePermission'
@@ -22,7 +23,7 @@ import {
   PendingQueueDocument,
   RejectBookingDocument,
 } from '../graphql/approvals.graphql'
-import type { PendingQueueQuery } from '@/graphql/graphql'
+import type { PendingQueueQuery, PendingQueueQueryVariables } from '@/graphql/graphql'
 
 type QueueBooking = PendingQueueQuery['pendingQueue']['items'][number]
 
@@ -36,6 +37,7 @@ interface ApprovalRow {
   attendees: number
   status: string
   equipment: string
+  createdAt: string
 }
 
 function toRow(booking: QueueBooking): ApprovalRow {
@@ -53,26 +55,26 @@ function toRow(booking: QueueBooking): ApprovalRow {
     equipment: booking.equipmentLines
       .map((line) => `${line.name} ×${String(line.requestedQuantity)}`)
       .join(', '),
+    createdAt: formatDateTime(booking.createdAt),
   }
 }
 
 /**
- * No `sortField` on any column, and that is the point, not an omission.
- *
- * `pendingQueue` takes no `sort`, no `search` and no `filter` argument (FR-50
- * fixes the queue's contents and its order server-side, and S8's suite proves a
- * `sort` argument is a BAD_USER_INPUT error). The `DataTable` says "this column
- * is not sortable" by leaving `sortField` off, so the headers are not clickable
- * and the screen never sends an argument the endpoint does not have. The order on
- * screen is the order the server sent, page by page — re-sorting here would
- * order one page of a server-paginated set and call it the queue.
+ * The queue is a work list, so it opens newest-first: the initial table state
+ * carries `sort: { field: 'createdAt', direction: 'DESC' }`, which is also the
+ * server's own default when no `sort` is sent. Every `sortField` below is a
+ * field from the server's sortable-field whitelist, so a header click sends a
+ * `sort` the endpoint accepts and a non-whitelisted field is refused by the
+ * server, not silently ignored. Requester, room and equipment have no sortable
+ * field on this endpoint, so their headers are not clickable — the same
+ * "absent `sortField` means not sortable" contract the roles screen uses.
  */
 const COLUMNS: readonly DataTableColumn<ApprovalRow>[] = [
   { field: 'requester', headerName: 'Requester', minWidth: 150, flex: 1 },
   { field: 'room', headerName: 'Room', minWidth: 130, flex: 1 },
-  { field: 'startTime', headerName: 'Requested from', width: 175, align: 'left' },
-  { field: 'endTime', headerName: 'Requested to', width: 175, align: 'left' },
-  { field: 'purpose', headerName: 'Purpose', minWidth: 160, flex: 1 },
+  { field: 'startTime', headerName: 'Requested from', width: 175, align: 'left', sortField: 'startTime' },
+  { field: 'endTime', headerName: 'Requested to', width: 175, align: 'left', sortField: 'endTime' },
+  { field: 'purpose', headerName: 'Purpose', minWidth: 160, flex: 1, sortField: 'purpose' },
   { field: 'equipment', headerName: 'Equipment', minWidth: 140, flex: 1 },
   {
     field: 'attendees',
@@ -80,8 +82,10 @@ const COLUMNS: readonly DataTableColumn<ApprovalRow>[] = [
     width: 110,
     align: 'right',
     type: 'number',
+    sortField: 'numberOfAttendees',
   },
-  { field: 'status', headerName: 'Status', width: 120, align: 'left' },
+  { field: 'status', headerName: 'Status', width: 120, align: 'left', sortField: 'status' },
+  { field: 'createdAt', headerName: 'Created', width: 175, align: 'left', sortField: 'createdAt' },
 ]
 
 const REJECT_FIELDS: readonly FormField[] = [
@@ -117,14 +121,25 @@ export function ApprovalsPage(): React.ReactElement {
   const canApprove = usePermission('booking:approve')
   const canReject = usePermission('booking:reject')
 
-  const [state, setState] = useState<TableState>(INITIAL_TABLE_STATE)
+  const [state, setState] = useState<TableState>({
+    ...INITIAL_TABLE_STATE,
+    sort: { field: 'createdAt', direction: 'DESC' },
+  })
   const [approving, setApproving] = useState<ApprovalRow | null>(null)
   const [rejecting, setRejecting] = useState<ApprovalRow | null>(null)
   const [approveFailure, setApproveFailure] = useState<string | null>(null)
   const [notice, setNotice] = useState<DecisionNotice | null>(null)
 
+  const queryVariables: PendingQueueQueryVariables = { page: state.page + 1, pageSize: state.pageSize }
+  if (state.search !== '') {
+    queryVariables.search = state.search
+  }
+  if (state.sort !== null) {
+    queryVariables.sort = state.sort
+  }
+
   const { data, loading, error, refetch } = useQuery(PendingQueueDocument, {
-    variables: { page: state.page + 1, pageSize: state.pageSize },
+    variables: queryVariables,
     notifyOnNetworkStatusChange: true,
   })
   const [approveBooking, approveState] = useMutation(ApproveBookingDocument)
@@ -202,16 +217,16 @@ export function ApprovalsPage(): React.ReactElement {
         Booking approvals
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Every request waiting for a decision, oldest first. Open one to see its
+        Every request waiting for a decision, newest first. Open one to see its
         history, the room, and the equipment still available for that window.
       </Typography>
 
       {notice !== null && (
-        <Alert
+        <Notice
           severity="success"
           onClose={() => setNotice(null)}
-          sx={{ mb: 2 }}
-          data-testid="approval-notice"
+          resetKey={notice.bookingId}
+          testid="approval-notice"
         >
           <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
             <Typography variant="body2">
@@ -238,7 +253,7 @@ export function ApprovalsPage(): React.ReactElement {
               Open booking
             </Link>
           </Stack>
-        </Alert>
+        </Notice>
       )}
 
       {error !== undefined && (
@@ -254,7 +269,6 @@ export function ApprovalsPage(): React.ReactElement {
         state={state}
         onStateChange={setState}
         loading={loading}
-        searchable={false}
         emptyMessage="No bookings are waiting for a decision"
         onRowClick={(row) => void navigate(`/bookings/${row.id}`)}
         actions={(row) => (

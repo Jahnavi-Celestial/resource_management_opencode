@@ -11,18 +11,20 @@ import Typography from '@mui/material/Typography'
 import { DataTable } from '@/components/DataTable'
 import { INITIAL_TABLE_STATE, type DataTableColumn, type TableState } from '@/components/DataTable/types'
 import { Form } from '@/components/Form'
+import { Notice } from '@/components/Notice'
 import type { FieldErrors, FormField, FormValues } from '@/components/Form/types'
 import { listValue, numberValue, optionalNumberValue, optionalTextValue, textValue } from '@/components/Form/values'
 import { usePermission } from '@/auth/usePermission'
 import { formLevelError, parseServerError } from '@/lib/fieldErrors'
 import { endOfDayIso, localInputToIso, startOfDayIso } from '@/lib/datetimes'
 import { formatDateTime } from '@/lib/format'
-import { BookingAvailabilityPanel } from '../components/BookingAvailabilityPanel'
+import { BookingAvailabilityPanel, type WindowQuestion } from '../components/BookingAvailabilityPanel'
 import {
   BookableEquipmentDocument,
   BookableRoomsDocument,
   BookingsDocument,
   CreateBookingDocument,
+  EquipmentAvailabilityForWindowDocument,
 } from '../graphql/bookings.graphql'
 import type {
   BookingFilterInput,
@@ -247,6 +249,9 @@ export function BookingsPage(): React.ReactElement {
   const [state, setState] = useState<TableState>(INITIAL_TABLE_STATE)
   const [formOpen, setFormOpen] = useState(false)
   const [created, setCreated] = useState<CreatedBooking | null>(null)
+  // The window the availability panel is asking about, lifted from the panel so
+  // the equipment select's options can show the same window-aware numbers.
+  const [availabilityWindow, setAvailabilityWindow] = useState<WindowQuestion>({ kind: 'incomplete' })
 
   const { data, loading, error, refetch } = useQuery(BookingsDocument, {
     variables: toVariables(state),
@@ -264,6 +269,21 @@ export function BookingsPage(): React.ReactElement {
   })
   const [createBooking, createState] = useMutation(CreateBookingDocument)
 
+  const windowReady = availabilityWindow.kind === 'ready' ? availabilityWindow.window : null
+  // The window-aware remaining quantity of every bookable item, in the one
+  // batched request the per-item endpoint cannot make (a select of ten options
+  // is ten requests). Skipped until there is a window to ask about and the
+  // form is open — an option list for a draft nobody is editing is a request
+  // nobody needs.
+  const availability = useQuery(EquipmentAvailabilityForWindowDocument, {
+    variables: {
+      equipmentIds: (equipment.data?.equipment.items ?? []).map((item) => item.id),
+      startDate: windowReady?.startDate ?? '',
+      endDate: windowReady?.endDate ?? '',
+    },
+    skip: !canCreate || !formOpen || windowReady === null,
+  })
+
   const optionsLoading = rooms.loading || equipment.loading
   const parsed = parseServerError(createState.error)
   const rows = (data?.bookings.items ?? []).map(toRow)
@@ -272,10 +292,24 @@ export function BookingsPage(): React.ReactElement {
     value: room.id,
     label: `${room.name} — ${room.location}, seats ${String(room.capacity)}`,
   }))
-  const equipmentOptions = (equipment.data?.equipment.items ?? []).map((item) => ({
-    value: item.id,
-    label: `${item.name} — ${String(item.quantityAvailable)} available`,
-  }))
+  // The select's label is the server's window-aware number once there is a
+  // window to ask about: the same FR-35 answer the panel below the fields
+  // prints, so the option the user picks and the quantity the panel warns
+  // about can never disagree. Before that (and while the batched answer is
+  // still in flight) it falls back to the standing total.
+  const remainingById = new Map(
+    (availability.data?.equipmentAvailabilityForWindow ?? []).map((row) => [row.equipmentId, row.remainingAvailability]),
+  )
+  const equipmentOptions = (equipment.data?.equipment.items ?? []).map((item) => {
+    const remaining = windowReady !== null ? remainingById.get(item.id) : undefined
+    return {
+      value: item.id,
+      label:
+        remaining !== undefined
+          ? `${item.name} — ${String(remaining)} available`
+          : `${item.name} — ${String(item.quantityAvailable)} available`,
+    }
+  })
 
   const closeForm = (): void => {
     setFormOpen(false)
@@ -327,11 +361,11 @@ export function BookingsPage(): React.ReactElement {
       </Typography>
 
       {created !== null && (
-        <Alert
+        <Notice
           severity="success"
           onClose={() => setCreated(null)}
-          sx={{ mb: 2 }}
-          data-testid="booking-created"
+          resetKey={created.id}
+          testid="booking-created"
         >
           <Typography variant="body2" sx={{ mb: 1 }}>
             Booking created. It is not booked yet — it waits for a manager.
@@ -348,7 +382,7 @@ export function BookingsPage(): React.ReactElement {
               {created.roomName} · {created.purpose}
             </Typography>
           </Stack>
-        </Alert>
+        </Notice>
       )}
 
       {error !== undefined && (
@@ -413,6 +447,7 @@ export function BookingsPage(): React.ReactElement {
                 equipmentId: optionalTextValue(line, 'equipmentId') ?? '',
                 quantity: optionalNumberValue(line, 'quantity') ?? 0,
               }))}
+              onWindowChange={setAvailabilityWindow}
             />
           )}
           onSubmit={(values) => void submit(values)}

@@ -131,9 +131,18 @@ async function test1LoginAndMe(dataSource: DataSource): Promise<string> {
   check('me returns the admin profile and Admin role', meValue?.employee.email === env.admin.email && meValue?.roles.map((r) => r.roleName).join(',') === 'Admin', `email=${String(meValue?.employee.email)}, roles=${JSON.stringify(meValue?.roles.map((r) => r.roleName))}`)
 
   const actual = new Set(meValue?.permissionKeys ?? [])
-  const expected = new Set<string>(PERMISSION_KEYS)
+  // The Admin role holds the whole FR-89 catalogue except the three booking
+  // permissions that are someone else's job: approving and rejecting (the
+  // Manager's — the admin must not decide bookings) and creating (the
+  // Employee's — a booking of the admin's own could never be decided, since
+  // FR-56 bars self-decision and the admin holds no approval permission).
+  const expected = new Set<string>(
+    PERMISSION_KEYS.filter(
+      (key) => key !== 'booking:approve' && key !== 'booking:reject' && key !== 'booking:create',
+    ),
+  )
   const exactMatch = actual.size === expected.size && [...expected].every((key) => actual.has(key))
-  check('me.permissionKeys equals the FR-89 catalogue exactly (19 keys)', exactMatch, `keys=${JSON.stringify([...actual].sort())}`)
+  check('me.permissionKeys equals the FR-89 catalogue minus the Manager/Employee booking permissions (16 keys)', exactMatch, `keys=${JSON.stringify([...actual].sort())}`)
 
   check('JWT subject is the authenticated employee id', payload['sub'] === meValue?.employee.id, `sub=${String(payload['sub'])}`)
   return token ?? ''
@@ -260,11 +269,17 @@ async function test5LockoutGuard(adminToken: string, adminEmployeeId: string, te
   const roleAssign = ((permissionsQuery.data as { permissions?: { items: Array<{ id: string; permissionName: string }> } } | null | undefined)?.permissions?.items ?? []).find((p) => p.permissionName === 'role:assign')
   if (roleAssign === undefined) throw new Error('role:assign permission not found')
 
+  // Path A is the system-role rule, not the lockout guard: with the seed
+  // applied, Admin always holds `role:assign`, so `assertRoleDeletable` can
+  // never fire for it — the stronger, name-based refusal answers instead. That
+  // also makes the answer deterministic: it no longer depends on which
+  // unrelated roles happen to hold `role:assign` in this shared database.
+  // Paths B and C below remain the real lockout-guard proofs.
   const pathA = await gql(`mutation { deleteRole(id: "${adminRole.id}") }`, adminToken)
   const pathAError = firstError(pathA)
   check(
-    'path A: deleteRole(Admin) rejected with a clear LOCKOUT_GUARD error (no 500)',
-    pathAError !== null && pathAError.code === 'LOCKOUT_GUARD' && pathA.status === 200 && pathA.data === null && pathAError.message.includes('role:assign'),
+    'path A: deleteRole(Admin) rejected with a clear SYSTEM_ROLE error (no 500)',
+    pathAError !== null && pathAError.code === 'SYSTEM_ROLE' && pathA.status === 200 && pathA.data === null,
     `→ ${describeError(pathA)}`,
   )
 
@@ -286,11 +301,11 @@ async function test5LockoutGuard(adminToken: string, adminEmployeeId: string, te
 
   const roleStillThere = await gql(`query { role(id: "${adminRole.id}") { roleName permissions { permissionName } } }`, adminToken)
   const roleStillThereData = roleStillThere.data as { role?: { roleName: string; permissions: Array<{ permissionName: string }> } } | null | undefined
-  check('state intact after all three rejections', roleStillThereData?.role?.roleName === 'Admin' && (roleStillThereData?.role?.permissions.length ?? 0) === 19, `role(Admin) still exists with ${String(roleStillThereData?.role?.permissions.length)} permissions`)
+  check('state intact after all three rejections', roleStillThereData?.role?.roleName === 'Admin' && (roleStillThereData?.role?.permissions.length ?? 0) === 16, `role(Admin) still exists with ${String(roleStillThereData?.role?.permissions.length)} permissions`)
 
   const me = await gql('query { me { roles { roleName } permissionKeys } }', adminToken)
   const meData = me.data as { me?: { roles: Array<{ roleName: string }>; permissionKeys: string[] } } | null | undefined
-  check('bootstrap admin unchanged', meData?.me?.roles.map((r) => r.roleName).join(',') === 'Admin' && (meData?.me?.permissionKeys.length ?? 0) === 19, `roles=Admin, permissionKeys=19`)
+  check('bootstrap admin unchanged', meData?.me?.roles.map((r) => r.roleName).join(',') === 'Admin' && (meData?.me?.permissionKeys.length ?? 0) === 16, `roles=Admin, permissionKeys=${String(meData?.me?.permissionKeys.length)}`)
 
   const assignTemp = await gql(`mutation { assignRoleToEmployee(input: { employeeId: "${tempAdminEmployeeId}", roleId: "${adminRole.id}" }) { email } }`, adminToken)
   const removeTemp = await gql(`mutation { removeRoleFromEmployee(input: { employeeId: "${tempAdminEmployeeId}", roleId: "${adminRole.id}" }) { email } }`, adminToken)

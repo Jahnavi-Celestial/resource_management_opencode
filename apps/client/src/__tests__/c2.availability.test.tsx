@@ -52,7 +52,7 @@ import {
  * queue, and then the requester's (or the manager's) detail screen shows the new
  * status and the transition that caused it. Each step is checked against the
  * server, and the queue is walked by `showRow` for the reason the approvals suite
- * documents — the queue is global, unsearchable and oldest-first.
+ * documents — the queue is global, so this run's fixtures are never on page 1.
  *
  * Everything is token-scoped (`TOKEN` is in the room, the equipment and every
  * purpose), and no assertion compares a count to a literal: this database has
@@ -157,6 +157,7 @@ const createdEmployeeIds: string[] = []
 let requesterEmail = ''
 let requesterToken = ''
 let managerEmail = ''
+let managerToken = ''
 
 async function login(email: string): Promise<string> {
   const result = await gql<{ login: string }>(LOGIN, { input: { email, password: PASSWORD } })
@@ -236,16 +237,17 @@ beforeAll(async () => {
   const managerId = await createEmployee(MANAGER_FIRST, MANAGER_LAST, managerEmail)
   await gql(ASSIGN_ROLE, { input: { employeeId: managerId, roleId: employeeRoleId } }, adminToken)
   await gql(ASSIGN_ROLE, { input: { employeeId: managerId, roleId: managerRoleId } }, adminToken)
+  managerToken = await login(managerEmail)
 
   // The booking that makes the room busy, created by the *requester* and
-  // approved by the admin.
+  // approved by the manager.
   //
   // Two requirements, both from the server rather than from taste. It has to be
   // APPROVED, not merely PENDING, because FR-35 lets only a committed booking
   // block — a PENDING fixture would show the room as free and the whole suite
   // would be measuring nothing. And the two halves have to be *different people*:
-  // the admin holds `booking:approve`, so an admin-created booking is a booking
-  // the admin may not approve, and the server refuses it with FR-56's own message
+  // the manager holds `booking:approve`, so a manager-created booking is a booking
+  // the manager may not approve, and the server refuses it with FR-56's own message
   // ("A manager cannot approve or reject their own booking request"). Doing it the
   // other way round is the arrangement the requirement actually describes, and
   // this suite found that by being refused.
@@ -264,7 +266,7 @@ beforeAll(async () => {
     requesterToken,
   )
   blockingBookingId = blocking.createBooking.id
-  await gql(APPROVE, { id: blockingBookingId }, adminToken)
+  await gql(APPROVE, { id: blockingBookingId }, managerToken)
 }, 150_000)
 
 afterAll(async () => {
@@ -504,7 +506,7 @@ describe('C2 — the booking lifecycle end to end', () => {
     // 3. A different person decides it. The manager signs out of the requester's
     //    session (the token is in localStorage, exactly as in a browser) and
     //    finds the request in the queue, which is walked because the queue is
-    //    global and oldest-first.
+    //    global — this run's fixtures are never on page 1.
     await signOutIfSignedIn()
     await signInAndWait(managerEmail, PASSWORD)
     await userEvent.setup().click(within(await screen.findByTestId('nav-approvals')).getByRole('link'))

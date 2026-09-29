@@ -435,7 +435,11 @@ async function test4RoomLifecycle(): Promise<RoomItem[]> {
   )
   check(
     'unfiltered list still CONTAINS the deactivated room, flagged isActive: false',
-    allPage.items.some((room) => room.id === focusRoom.id) && allPage.items.length === 2,
+    // Scoped to this suite's fixtures: `search` is a tokenized ILIKE, so "S4"
+    // also matches older runs' rooms whose generated names happen to contain
+    // "s4" — a literal page length would be a fact about the shared database.
+    allPage.items.some((room) => room.id === focusRoom.id) &&
+      allPage.items.filter((room) => room.name.startsWith(ROOM_PREFIX)).length === 2,
     `unfiltered totalCount=${String(allPage.totalCount)}, items=${JSON.stringify(allPage.items)}`,
   )
   return [focusRoom, boardRoom]
@@ -483,7 +487,10 @@ async function test5EquipmentLifecycle(): Promise<EquipmentItem[]> {
   )
   check(
     'unfiltered list still CONTAINS the deactivated item, flagged isActive: false',
-    allPage.items.some((item) => item.id === projectorItem.id) && allPage.items.length === 2,
+    // Scoped to this suite's fixtures, for the same tokenized-ILIKE reason as
+    // the room check above.
+    allPage.items.some((item) => item.id === projectorItem.id) &&
+      allPage.items.filter((item) => item.name.startsWith(EQUIPMENT_PREFIX)).length === 2,
     `unfiltered totalCount=${String(allPage.totalCount)}, items=${JSON.stringify(allPage.items)}`,
   )
   return [projectorItem, whiteboardItem]
@@ -587,6 +594,13 @@ async function test6SearchAndSort(): Promise<void> {
 }
 
 async function cleanup(dataSource: DataSource): Promise<void> {
+  // The welcome email's outbox rows are addressed, not linked, so they
+  // outlive the fixture employees — clear them first or the dev server's
+  // cron sends them.
+  await dataSource.query('DELETE FROM email_outbox WHERE to_email LIKE $1 OR to_email LIKE $2', [
+    `${FIXTURE_PREFIX}%`,
+    `${NFR_PREFIX}%`,
+  ])
   await dataSource.getRepository(Employee).delete([{ email: Like(`${FIXTURE_PREFIX}%`) }, { email: Like(`${NFR_PREFIX}%`) }])
   await dataSource.query('DELETE FROM meeting_room WHERE name LIKE $1', [`${ROOM_PREFIX}%`])
   await dataSource.query('DELETE FROM equipment WHERE name LIKE $1', [`${EQUIPMENT_PREFIX}%`])

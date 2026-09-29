@@ -14,7 +14,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    include: ['src/__tests__/c1.acceptance.test.tsx', 'src/__tests__/c1.display-name.test.ts'],
+    include: ['src/__tests__/c1.acceptance.test.tsx', 'src/__tests__/c1.display-name.test.ts', 'src/__tests__/notice.test.tsx'],
     setupFiles: ['./src/__tests__/setup.ts'],
     // The suite boots a real server and drives four screens through real
     // queries, so it needs more room than a unit run.

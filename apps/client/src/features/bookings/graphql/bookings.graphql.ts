@@ -140,6 +140,28 @@ export const EquipmentAvailabilityDocument = graphql(/* GraphQL */ `
 `)
 
 /**
+ * The batched form of FR-29: the window-aware remaining quantity of *every*
+ * bookable item in one request, so the equipment select's options can show
+ * what the chosen window leaves of each item.
+ *
+ * The per-item `EquipmentAvailability` cannot answer that — a select of ten
+ * options is ten requests — and the client must not subtract bookings itself:
+ * the overlap rule is the server's FR-35 definition, evaluated against data
+ * the client only has a stale snapshot of. The select's label is the server's
+ * number or nothing.
+ */
+export const EquipmentAvailabilityForWindowDocument = graphql(/* GraphQL */ `
+  query EquipmentAvailabilityForWindow($equipmentIds: [String!]!, $startDate: DateTimeISO!, $endDate: DateTimeISO!) {
+    equipmentAvailabilityForWindow(equipmentIds: $equipmentIds, startDate: $startDate, endDate: $endDate) {
+      equipmentId
+      name
+      quantityAvailable
+      remainingAvailability
+    }
+  }
+`)
+
+/**
  * One booking in full (FR-45–49).
  *
  * The shape of this selection is the detail screen's whole design, so it is worth

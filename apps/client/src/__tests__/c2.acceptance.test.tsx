@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   adminToken,
   bootServer,
+  clearOutboxFor,
   CLIENT_ROOT,
   dataRowTexts,
   dataRows,
@@ -129,9 +130,12 @@ let roomId = ''
 let equipmentId = ''
 /** A `booking:read:own` session: the seeded Employee role. */
 let ownerEmail = ''
-/** Booked by the admin in `beforeAll`; the search/date-filter target. */
+/** A second employee: the requester of the bookings the owner must not see. */
+let otherEmail = ''
+let otherToken = ''
+/** Booked by the second employee in `beforeAll`; the search/date-filter target. */
 let equipmentBookingId = ''
-/** Booked by the admin in `beforeAll`; must never appear in the owner's list. */
+/** Booked by the second employee in `beforeAll`; must never appear in the owner's list. */
 let otherBookingId = ''
 let otherBookingPurpose = ''
 /** Created through the screen in test 1, which test 2 then collides with. */
@@ -179,9 +183,10 @@ beforeAll(async () => {
   )
   equipmentId = equipment.createEquipment.id
 
-  // One `booking:read:own` employee. Two employees would be needed to prove
-  // scoping *between* requesters, but the booking that must be invisible belongs
-  // to the admin — a third identity, and unambiguously not the session's.
+  // Two `booking:read:own` employees. The admin no longer holds
+  // `booking:create` — booking is the Employee's job — so the bookings the
+  // owner must not see belong to a *second* employee: still unambiguously not
+  // the session's, and created by a token the suite is allowed to use.
   const roles = await gql<{ roles: { items: { id: string; roleName: string }[] } }>(
     `query { roles { items { id roleName } } }`,
     {},
@@ -194,12 +199,22 @@ beforeAll(async () => {
   ownerEmail = `${TOKEN}owner@resource.local`
   const ownerId = await createEmployee('Ola', 'Owner', ownerEmail)
   await gql(ASSIGN_ROLE, { input: { employeeId: ownerId, roleId: employeeRole.id } }, adminToken)
+  otherEmail = `${TOKEN}other@resource.local`
+  const otherId = await createEmployee('Ana', 'Other', otherEmail)
+  await gql(ASSIGN_ROLE, { input: { employeeId: otherId, roleId: employeeRole.id } }, adminToken)
+  otherToken = (
+    await gql<{ login: string }>(
+      `mutation Login($input: LoginInput!) { login(input: $input) }`,
+      { input: { email: otherEmail, password: PASSWORD } },
+    )
+  ).login
 
-  // Two admin-owned bookings in the same room at different hours, so no
-  // exclusion-constraint conflict is possible between fixtures. The first has an
-  // equipment line, which is what makes FR-41's `EXISTS` over `booking_equipment`
-  // observable: the equipment's *name* finds it, and no visible column says so.
-  equipmentBookingId = await createBooking(adminToken, {
+  // Two bookings owned by the second employee, in the same room at different
+  // hours, so no exclusion-constraint conflict is possible between fixtures. The
+  // first has an equipment line, which is what makes FR-41's `EXISTS` over
+  // `booking_equipment` observable: the equipment's *name* finds it, and no
+  // visible column says so.
+  equipmentBookingId = await createBooking(otherToken, {
     roomId,
     startTime: SLOT_B.start.toISOString(),
     endTime: SLOT_B.end.toISOString(),
@@ -208,7 +223,7 @@ beforeAll(async () => {
     equipment: [{ equipmentId, quantity: 2 }],
   })
   otherBookingPurpose = `${TOKEN}other-purpose`
-  otherBookingId = await createBooking(adminToken, {
+  otherBookingId = await createBooking(otherToken, {
     roomId,
     startTime: SLOT_C.start.toISOString(),
     endTime: SLOT_C.end.toISOString(),
@@ -233,9 +248,10 @@ afterAll(() => {
 })
 
 afterAll(async () => {
-  // Nothing to clear in `email_outbox`: a create is PENDING, and only
-  // approve/reject enqueue a decision mail, so these fixtures never address
-  // mail at all (the one leak AGENTS.md warns about cannot happen here).
+  // The fixture employees are created through the mutation, so each one
+  // enqueues a welcome email. The outbox is addressed, not linked — those rows
+  // outlive the employees, so clear them by address before the employees go.
+  await clearOutboxFor([ownerEmail, otherEmail]).catch(() => undefined)
   for (const id of createdEmployeeIds) {
     await gql(DELETE_EMPLOYEE, { id }, adminToken).catch(() => undefined)
   }
@@ -262,6 +278,21 @@ async function openBookingsAsAdmin(): Promise<ReturnType<typeof renderApp>> {
   const user = userEvent.setup()
   // The testid is on the <li>; the link is inside it, and a click on the <li>
   // never reaches a child in the DOM.
+  await user.click(within(await screen.findByTestId('nav-bookings')).getByRole('link'))
+  await screen.findByTestId('datatable')
+  return view
+}
+
+/**
+ * Signs in as the owner employee and lands on the bookings screen. The create
+ * dialog is driven in this session rather than the admin's because the admin no
+ * longer holds `booking:create` — booking is the Employee's job — so a create
+ * the suite performs has to be one the server will accept.
+ */
+async function openBookingsAsOwner(): Promise<ReturnType<typeof renderApp>> {
+  const view = renderApp(newClient(), '/login')
+  await signInAndWait(ownerEmail, PASSWORD)
+  const user = userEvent.setup()
   await user.click(within(await screen.findByTestId('nav-bookings')).getByRole('link'))
   await screen.findByTestId('datatable')
   return view
@@ -305,7 +336,7 @@ async function fillBookingForm(options: {
 
 describe('C2 — booking create and booking list', () => {
   it('1. a successful create shows the booking UUID and the server’s PENDING status (FR-38)', async () => {
-    const view = await openBookingsAsAdmin()
+    const view = await openBookingsAsOwner()
     await openCreateDialog()
     uiBookingPurpose = `${TOKEN}created`
     await fillBookingForm({
@@ -358,7 +389,7 @@ describe('C2 — booking create and booking list', () => {
   }, 180_000)
 
   it('2. a refused create renders the server’s own reason, and the client rules mirror it', async () => {
-    const view = await openBookingsAsAdmin()
+    const view = await openBookingsAsOwner()
     await openCreateDialog()
     const user = userEvent.setup()
 
@@ -510,8 +541,10 @@ describe('C2 — booking create and booking list', () => {
     expect(gridImporters).toEqual([])
 
     // (b) Runtime: the mounted screen renders those two components, and the grid
-    // is the one inside the shared wrapper.
-    const view = await openBookingsAsAdmin()
+    // is the one inside the shared wrapper. The session is the owner employee's
+    // rather than the admin's because the admin no longer holds `booking:create`,
+    // so the create dialog it opens is one the server will accept.
+    const view = await openBookingsAsOwner()
     const table = await screen.findByTestId('datatable')
     expect(table).toHaveAttribute('data-component', 'DataTable')
     expect(table.querySelector('.MuiDataGrid-root')).not.toBeNull()

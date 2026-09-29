@@ -6,6 +6,7 @@ import Button from '@mui/material/Button'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { Notice } from '@/components/Notice'
 import { DataTable } from '@/components/DataTable'
 import { INITIAL_TABLE_STATE, type DataTableColumn, type TableState } from '@/components/DataTable/types'
 import { Form } from '@/components/Form'
@@ -189,19 +190,19 @@ export function RoomsPage(): React.ReactElement {
       </Typography>
 
       {notice !== null && (
-        <Alert severity="success" onClose={() => setNotice(null)} sx={{ mb: 2 }} data-testid="screen-notice">
+        <Notice severity="success" onClose={() => setNotice(null)} resetKey={notice} testid="screen-notice">
           {notice}
-        </Alert>
+        </Notice>
       )}
       {writeError !== null && (
-        <Alert
+        <Notice
           severity="error"
           onClose={() => setWriteError(null)}
-          sx={{ mb: 2 }}
-          data-testid="screen-write-error"
+          resetKey={writeError}
+          testid="screen-write-error"
         >
           {writeError}
-        </Alert>
+        </Notice>
       )}
       {error !== undefined && (
         <Alert severity="error" sx={{ mb: 2 }} data-testid="screen-error">

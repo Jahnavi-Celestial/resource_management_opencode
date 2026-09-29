@@ -6,7 +6,14 @@
 
 import type { ReactNode } from 'react'
 
-export type FormValue = string | number | boolean | null
+/**
+ * `string[]` exists for `multiselect` only. It is deliberately not a general
+ * "any list" member: a `group` field stores its rows under flat composite keys
+ * (`equipment.0.quantity`), so every value it writes is still a scalar, and
+ * widening this union for a list nobody reads would make every reader below
+ * guess at a shape it cannot see.
+ */
+export type FormValue = string | number | boolean | null | string[]
 
 export type FormValues = Record<string, FormValue>
 
@@ -25,6 +32,12 @@ export type FieldErrors = Record<string, string[]>
  * exists because a flat field schema cannot say "the same row again, with this
  * row's values", and a screen must not hand-roll that loop if the booking form
  * is to keep sharing this component.
+ *
+ * `multiselect` is the one field that holds several values at once: a set of
+ * choices from one option list, where the answer is "which of these" rather
+ * than "which one" (an employee's roles). It is a list of option values, so
+ * the screen reads it with `stringListValue` — never `textValue`, which would
+ * join the list into a single string.
  */
 export type FieldType =
   | 'text'
@@ -32,6 +45,7 @@ export type FieldType =
   | 'password'
   | 'number'
   | 'select'
+  | 'multiselect'
   | 'checkbox'
   | 'textarea'
   | 'datetime'

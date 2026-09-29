@@ -6,6 +6,7 @@ import Button from '@mui/material/Button'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { Notice } from '@/components/Notice'
 import { DataTable } from '@/components/DataTable'
 import { INITIAL_TABLE_STATE, type DataTableColumn, type TableState } from '@/components/DataTable/types'
 import { Form } from '@/components/Form'
@@ -26,7 +27,8 @@ type Equipment = EquipmentQuery['equipment']['items'][number]
 interface EquipmentRow {
   id: string
   name: string
-  quantityAvailable: number
+  /** The server's dynamic "free right now" — total minus committed bookings. */
+  availableNow: number
   isActive: string
   createdAt: string
 }
@@ -35,7 +37,9 @@ function toRow(item: Equipment): EquipmentRow {
   return {
     id: item.id,
     name: item.name,
-    quantityAvailable: item.quantityAvailable,
+    // The list always computes it; the fallback is for the null a server that
+    // did not compute it (create/update responses) would send.
+    availableNow: item.availableNow ?? item.quantityAvailable,
     isActive: item.isActive ? 'Yes' : 'No',
     createdAt: formatDateTime(item.createdAt),
   }
@@ -70,7 +74,12 @@ const FIELDS: readonly FormField[] = [
 
 const COLUMNS: readonly DataTableColumn<EquipmentRow>[] = [
   { field: 'name', headerName: 'Name', sortField: 'name', flex: 1, minWidth: 200 },
-  { field: 'quantityAvailable', headerName: 'Available', sortField: 'quantityAvailable', width: 120, type: 'number' },
+  // "Available" is the server's dynamic number — what is free right now, after
+  // the PENDING/APPROVED bookings holding the item over this moment — not the
+  // static total. Sorting stays on the static total: a computed value cannot be
+  // sorted by the server's ORDER BY, and a client-side sort of one page of a
+  // server-paginated set would be the lie NFR-7 exists to prevent.
+  { field: 'availableNow', headerName: 'Available', sortField: 'quantityAvailable', width: 120, type: 'number' },
   {
     field: 'isActive',
     headerName: 'Active',
@@ -116,6 +125,7 @@ export function EquipmentPage(): React.ReactElement {
           input: {
             name: textValue(values, 'name'),
             quantityAvailable: numberValue(values, 'quantityAvailable'),
+            isActive: booleanValue(values, 'isActive'),
           },
         },
       })
@@ -165,19 +175,19 @@ export function EquipmentPage(): React.ReactElement {
       </Typography>
 
       {notice !== null && (
-        <Alert severity="success" onClose={() => setNotice(null)} sx={{ mb: 2 }} data-testid="screen-notice">
+        <Notice severity="success" onClose={() => setNotice(null)} resetKey={notice} testid="screen-notice">
           {notice}
-        </Alert>
+        </Notice>
       )}
       {writeError !== null && (
-        <Alert
+        <Notice
           severity="error"
           onClose={() => setWriteError(null)}
-          sx={{ mb: 2 }}
-          data-testid="screen-write-error"
+          resetKey={writeError}
+          testid="screen-write-error"
         >
           {writeError}
-        </Alert>
+        </Notice>
       )}
       {error !== undefined && (
         <Alert severity="error" sx={{ mb: 2 }} data-testid="screen-error">
@@ -242,7 +252,16 @@ export function EquipmentPage(): React.ReactElement {
           title={editing === null ? 'New equipment' : 'Edit equipment'}
           fields={FIELDS}
           initialValues={
-            editing === null ? { isActive: true } : { ...editing, isActive: editing.isActive === 'Yes' }
+            editing === null
+              ? { isActive: true }
+              : {
+                  name: editing.name,
+                  // The row's dynamic "available now" is the edit's starting
+                  // quantity: it is the same total the row was computed from,
+                  // and the form's field is the static column.
+                  quantityAvailable: editing.availableNow,
+                  isActive: editing.isActive === 'Yes',
+                }
           }
           errors={parsed.fieldErrors}
           formError={formLevelError(parsed)}

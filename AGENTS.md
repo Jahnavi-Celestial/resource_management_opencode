@@ -55,9 +55,15 @@ send outside any lock, exponential backoff capped, dead-letter to FAILED at
 `scheduler.ts`, wired in main.ts. Booking approve/reject enqueue the email via
 their own `afterCommit` registration (`BookingService.enqueueDecisionEmail`), so
 FR-61 dispatch can never touch a booking transaction — a send failure only ever
-costs a retry. `npm run test:email` proves provider selection, the post-commit
+costs a retry. Employee creation enqueues a welcome email the same way
+(`EmployeeService.enqueueWelcomeEmail`, template `EMPLOYEE_WELCOME`): the
+plaintext password exists only in the create input, so create is the one moment
+it can be emailed — it is escaped at render time and the row is written
+post-commit, so a refused create (unknown role, rolled back) queues nothing.
+`npm run test:email` proves provider selection, the post-commit
 enqueue, dispatch via noop, retry-on-throw with the booking still APPROVED,
-exhaustion into FAILED, no-resend idempotency and subject/HTML injection safety.
+exhaustion into FAILED, no-resend idempotency and subject/HTML injection safety,
+and the welcome email's enqueue/escaped-password/refused-create-queues-nothing.
 Reminders (FR-74/75) and the elapsed-booking completion (FR-72/73) are done: S10
 is complete. `src/jobs/complete-elapsed-bookings.job.ts` transitions elapsed
 APPROVED bookings to COMPLETED in one transaction per booking, re-checking status
@@ -93,10 +99,14 @@ dialog and inline, inline server field errors), `src/components/ConfirmDialog/`,
 CRUD screens (`features/{employees,roles,rooms,equipment}`) wired into
 `AppRoutes`/`NAV_ITEMS` with `usePermission` gating. `npm run test:c1` is the
 single entry point: it boots the real server on an ephemeral port, records every
-GraphQL request through a `fetch` wrapper, and proves the six C1 claims
+GraphQL request through a `fetch` wrapper, and proves the nine C1 claims
 (four-screen reuse, server-side page/sort/search/filter variables, the NFR-6
 inline field error, `displayName()`, permission hiding plus the server's own
-`FORBIDDEN`, and a real Employee create/read/update/delete round trip). C2's
+`FORBIDDEN`, a real Employee create/read/update/delete round trip, the create
+form's single role dropdown defaulting to Employee, the edit form's roles
+multi-select pre-selected with the current roles and saved as a diff, and the
+`role:assign` gate that withholds the roles control from a session holding
+`employee:write` but not `role:assign`). C2's
 first half is complete: `features/bookings/` holds the four generated documents
 (`features/bookings/graphql/bookings.graphql.ts`: list, create, bookable rooms,
 bookable equipment) and `pages/BookingsPage.tsx` (create dialog + server-driven
@@ -152,7 +162,49 @@ query string, actor rendered through shared `displayName()`) and
 `report:read`, MUI Tabs, MUI Table in client mode for bounded aggregated
 result sets — report queries return plain arrays with no page/pageSize
 args, so server-driven DataTable does not apply). `npm run test:c0`/`c1`/`c2` pass.
-`npm run test:c0`/`c1`/`c2` pass.
+Role names are now case-insensitively unique (migration `…849-AddRoleNameUniqueCaseInsensitive`, mirroring the
+room/equipment precedent): `RoleRepository.findByName` folds with `LOWER(role_name)`, so `Admin`/`admin`/`ADMIN`
+are one role and the duplicate check cannot be bypassed by re-casing. `CreateRoleInput` gained an optional
+`permissionIds` — the role row and its grants are written in one transaction, so a refused permission id rolls
+the whole create back (no orphan role, proven by `test:roles` scenario 3). The roles screen's form now carries a
+permission multiselect (create + edit, diff with adds-before-removes) gated on `permission:read` for the query;
+the two diff mutations are `role:write`-gated, same as the form itself. `npm run test:roles` proves the duplicate
+refusal (exact/case-variant/padded), the atomic create, the dedup, the updateRole case handling, the concurrent
+ double-create, and the gating; `c1` test 11 proves the duplicate banner and the picker end to end.
+The three seeded roles are system roles and cannot be deleted or renamed
+(`modules/rbac/system-roles.ts` owns the names, `system-role-guard.ts` enforces
+the rule, `SystemRoleError` → `SYSTEM_ROLE`). The guard sits in
+`RoleService.deleteRole` *before* `assertRoleDeletable` — the system rule is the
+stronger refusal, and putting it first makes the answer deterministic rather than
+dependent on which unrelated roles happen to hold `role:assign`. The rename guard
+lives inside `updateRole`'s `roleName !== name` branch, so a no-op submit stays a
+no-op and editing a system role's *permissions* still works; the name comparison
+stays case-sensitive so `Admin` → `admin` is refused (`seedAdmin` looks the name
+up with an exact match). `RoleType.isSystemRole` is a computed field (no
+migration) so the roles screen hides Delete and disables the name input on those
+rows — NFR-5 courtesy, the server is still the control. `test:roles` TEST 8 proves
+the refusals, the intact grants, the no-op update and that a custom role is still
+deletable; `c1` test 12 proves the hidden button, the disabled input and that a
+direct `deleteRole(Admin)` still returns `SYSTEM_ROLE`. S2 path A was re-scoped
+from `LOCKOUT_GUARD` to `SYSTEM_ROLE` for the same reason — with the seed applied
+Admin always holds `role:assign`, so `assertRoleDeletable` can never fire for it;
+paths B and C remain the lockout-guard proofs. Caveat: `seedRoles` *syncs* grants,
+so a manual permission edit to a seeded role is reverted by the next `npm run seed`.
+The Admin role no longer holds `booking:create` (booking is the Employee's
+job; an admin's own booking could never be decided — FR-56 bars
+self-decision and the admin holds no approval permission), so the admin sees
+no New booking button and the `createBooking` mutation is FORBIDDEN for
+them; the C0 suite pins the admin's exact 16-key permission set and the S2
+and loaders suites pin the count. The equipment list's "Available" column is
+now the server's dynamic `availableNow` — total minus the quantity
+PENDING/APPROVED bookings hold over this moment (FR-35's committed
+definition, one batched `getEquipmentFreeQuantities` call per page), so it
+drops when a booking is approved and rises again when it is cancelled;
+sorting stays on the static total. The booking form's equipment select
+labels are window-aware (`Name — M available`, M = the server's
+`remainingAvailability` for the typed window) via the new batched
+`equipmentAvailabilityForWindow` query, which reuses the same computation
+in one request; the panel below the fields is unchanged.
 
 ## Commands
 
@@ -185,7 +237,8 @@ npm run test:booking-create # booking create + concurrency (service) and the two
 npm run test:booking-availability # S7 availability views (FR-23/29) + employee history (FR-10)
 npm run test:s7                # S7 full acceptance suite: NFR-1 N+1 elimination, NFR-4 100k performance, list/detail/availability
 npm run test:s8                # S8 acceptance suite: one file, service-level FR-50–56 then the GraphQL layer
-                               # (booking:approve/booking:reject gating, forced createdAt ASC sort, FR-56)
+                              # (booking:approve/booking:reject gating, createdAt DESC default + caller-supplied
+                              # sort/search, FR-56)
 npm run test:s9                # ALL of S9 in one command: runs the three S9 suites in sequence via
                                # scripts/acceptance-s9.ts — notification CRUD + booking-event wiring
                                # (FR-57–60, FR-75 unique index, create() sharing the caller's
@@ -197,7 +250,7 @@ npm run test:realtime        # WebSocket gateway (also run by test:s9; kept for 
                               # refusal, live push on booking approval, two-tabs fan-out, offline
                               # recipient still written to the DB, disconnect unregisters
                               # (boots a real HTTP server on an ephemeral port — needs local Postgres)
-npm run test:email     # FR-61 outbox (also run by test:s9; kept for focused iteration): provider selection, post-commit enqueue on approve/reject,
+npm run test:email     # FR-61 outbox (also run by test:s9; kept for focused iteration): provider selection, post-commit enqueue on approve/reject and employee create (welcome email),
                       # noop dispatch -> SENT, provider throw -> attempts+backoff with the booking
                       # still APPROVED, exhaustion -> FAILED, no-resend idempotency, injection safety
                       # (owns the outbox through the dispatcher's injected clock, so a running
@@ -222,10 +275,18 @@ npm run test:reports     # S11 reports (alias test:s11): four report queries aga
                          # suite also captures the SQL TypeORM really sends, asserts GROUP BY + aggregate
                          # functions are in it, and runs EXPLAIN on that exact statement (FR-70); plus
                          # report:read gating, read-only-schema and range/status validation
+                           # (needs local Postgres, no dev server)
+npm run test:roles        # RBAC roles: case-insensitive duplicate name refusal (exact/case-variant/padded),
+                          # createRole with permissionIds (atomic — unknown id rolls the whole create back),
+                          # dedup of repeated ids, updateRole own-name-different-case allowed vs another role's
+                          # case-variant refused, concurrent double-create (one wins, one CONFLICT), and
+                          # role:write gating of createRole + assignPermissionToRole,
+                          # and the system-role rule (Admin/Manager/Employee cannot be deleted or renamed)
                           # (needs local Postgres, no dev server)
 npm run test:c0         # C0 client foundation: renders the real app (jsdom) against a real GraphQL server the
                         # suite boots on an ephemeral port — codegen output present and typed with no hand-written
-                        # GraphQL, valid login stores the JWT and `me` populates the 19-key permission set, invalid
+                          # GraphQL, valid login stores the JWT and `me` populates the 16-key permission set (the
+                         # admin no longer holds the approval permissions), invalid
                         # credentials fail visibly with no token, nav/routes follow the permission set and a deep
                         # link to a gated route is refused, the MUI theme renders the corporate blue (and a
                         # different theme renders differently), and the Apollo client has no ws link
@@ -253,9 +314,10 @@ npm run test:c2         # C2 acceptance suite: boots the real server on an ephem
                         # requester and a deleted actor both rendered through displayName() itself, the
                         # hand-computed room/equipment overlap and remaining quantities, and a caller with no
                         # read permission getting the server's FORBIDDEN with no partial data while the
-                        # requester still sees it. The approval half (FR-50-56): the queue
-                        # lists only PENDING bookings in the order the server fixed and sorts
-                        # nothing itself, approving shows the server's APPROVED answer and the
+                         # requester still sees it. The approval half (FR-50-56): the queue
+                         # lists only PENDING bookings newest-first by default, with a working
+                         # search and sortable columns wired to the server's own arguments,
+                         # approving shows the server's APPROVED answer and the
                         # decided request leaves the queue, a too-short reason is refused with the
                         # server's own message under the input, a valid reason is stored, NFR-5 both
                         # ways (a session holding only booking:approve is offered no Reject anywhere
@@ -352,10 +414,14 @@ Scripts outside `npm run dev`:
   `to_email`, so acceptance suites that approve/reject must clear the rows
   addressed to their fixture employees (by address, before deleting the
   employees) or they leak into the shared dev database — where the dev server's
-  cron will dutifully send them. A user-supplied `purpose` reaches a mail
-  header, so `email.service.ts` `headerSafe()`s the subject (no CR/LF, capped)
-  and HTML-escapes the body; the rendered row, not the template name, is what
-  gets sent, so a template change never rewrites history.
+  cron will dutifully send them. Suites that create employees through the
+  service must do the same: every `createEmployee` enqueues an `EMPLOYEE_WELCOME`
+  row addressed to the new employee (s4/s5/s7/audit clear by fixture-email
+  prefix; c1 clears `c1-%` via `clearOutboxLike`; c2 suites call
+  `clearOutboxFor` with their fixture addresses). A user-supplied `purpose`
+  reaches a mail header, so `email.service.ts` `headerSafe()`s the subject (no
+  CR/LF, capped) and HTML-escapes the body; the rendered row, not the template
+  name, is what gets sent, so a template change never rewrites history.
 - `main.ts` boots exactly the PLAN.md:87 sequence, awaiting each step before the
   next: DataSource → `createApp` (builds the schema and rewrites
   `apps/server/schema.graphql`, so anything that can reach `/graphql` can trust
@@ -476,7 +542,7 @@ Scripts outside `npm run dev`:
       So the rule generalises to: a global value makes a count unscopable, not a page
       unbounded.
     - `booking-approval` scenario 12b walks the whole `pendingQueue` page by page:
-      the queue takes no `search` and no `status` argument, so it *is* the global
+      the queue takes no `status` argument, so it *is* the global
       PENDING set, its page 1 in a shared database is an earlier run's rows, and the
       suite's own fixtures — the newest — are not on it. `totalCount` is compared to
       `SELECT count(*) … WHERE status = 'PENDING'` rather than to a literal, which
@@ -532,6 +598,24 @@ Scripts outside `npm run dev`:
     into GraphQL variables by the screen, never applied locally. Three things in
     it are load-bearing, and each one is a bug the C1 suite caught, so do not
     "simplify" them away:
+    - `Notice` (`src/components/Notice/`) is the shared page-level banner: an
+      `Alert` that closes itself after `durationMs` (default 5000) while the
+      cross still works. Every screen used to hand-roll the same `Alert` with a
+      manual `onClose`; now Employees/Rooms/Equipment/Roles (`screen-notice` +
+      `screen-write-error`), Approvals (`approval-notice`) and Bookings
+      (`booking-created`) all render this one component, passing their existing
+      testid and a stable `resetKey` (the message string, a booking id). Two
+      things in it are load-bearing, both found by the suite failing:
+      `onClose` is held in a **ref**, so a screen's post-write list refetch (a
+      new `() => setNotice(null)` identity every render) cannot restart the
+      timer — keyed on it, the banner outlives the duration by as long as the
+      user spends on the page; and the timer keys on `resetKey`, not on mount
+      or on the children's identity, so a *new* message restarts the 5s while
+      JSX children (a fresh object every render) would restart it forever.
+      `notice.test.tsx` (in the C1 config) proves all three behaviours with
+      fake timers, and every advance is wrapped in `act()` — the close is a
+      setState from a timer callback, and without flushing the re-render the
+      assertion reads a DOM the timer has already logically dismissed.
     - The search draft is adopted from the parent only when the *incoming*
       `state.search` identity changes (`agreedSearch`), never when a keystroke is
       still inside the debounce. Comparing a draft against `state.search`
@@ -606,6 +690,36 @@ Scripts outside `npm run dev`:
       cross-field validation reported per field, through the same path as a server
       field error, so `parseServerError` and `validateValues` are one rendering
       path.
+    - `Form` also gained `multiselect`, the one field that holds several values
+      at once (an employee's roles). Three things about it are load-bearing, each
+      a bug the type system or a test caught: the value branch sits *before* the
+      shared `String(value)` coercion in `validate`/`submitValues`, because that
+      coercion turns `['a','b']` into `'a,b'` and would then measure
+      `minLength`/`maxLength` against a joined string; `[]` is truthy, so "required"
+      cannot be detected by the string path either and needs its own branch; and
+      the screen reads it with `stringListValue`, never `textValue`. `FormValue`
+      widened to include `string[]` for this one type — `group` fields dodge the
+      issue by storing rows under flat composite keys, so every other value is
+      still a scalar. MUI v9 types `TextField`'s select props through
+      `slotProps.select` (there is no top-level `SelectProps`), and its
+      `renderValue` is `(value: unknown) => ReactNode`, so the chip list narrows
+      the parameter instead of annotating it.
+  - The employee edit dialog edits roles through the server's own
+    `assignRoleToEmployee`/`removeRoleFromEmployee` (`@Authorized('role:assign')`),
+    not through a new `roleIds` field on `UpdateEmployeeInput`: those mutations
+    already carry the duplicate `ConflictError`, the unique-violation backstop and
+    the lockout guard (`assertRoleRemovableFromEmployee`), and a new input field
+    would bypass all three. The screen diffs the selection against the row's
+    `roleIds` and applies **adds before removes**, so a mid-way refusal leaves the
+    employee holding the roles they had plus the ones they should have — a failure
+    here must never take access away. `editing.roleIds` is advanced after every
+    successful call so a retry sends only the outstanding difference (a duplicate
+    assign is a `ConflictError`). The field is offered only with `role:assign`
+    (NFR-5, the same split `ApprovalsPage` uses for approve-vs-reject); the create
+    form stays single-choice `roleId`. Permissions are the **union** of an
+    employee's roles (`resolve-auth-context.ts` already did `DISTINCT` over
+    `user_role`), so there is no primary/secondary hierarchy and the field's helper
+    text says so.
   - The client rules on the create form (end after start, start not in the past,
     at least one attendee) are format rules the client can decide on its own; no
     client code re-implements a *server* business rule such as the room
@@ -698,14 +812,13 @@ Scripts outside `npm run dev`:
     the claim being proved is that the clicked row's own id is what the route carries.
   - Client C2 half 3, the approval queue. Five things in it are contracts rather
     than approval details, and four of the five were found by the suite failing:
-    - **The queue is a global PENDING set with no `search` argument and no sort
-      argument**, so "find my row" is a *pagination* problem: the fixtures of a run
-      are the newest bookings, every earlier client run's PENDING bookings are
-      still there, and the DataGrid's footer has only previous/next — no "Go to
-      last page". `showRow()` therefore takes the largest page size, reads the
-      *current page* out of the footer's own `1–100 of 144` label, and steps
-      forward until the row appears or the grid stops moving. The label is the
-      observable, deliberately: the request is not (a page already fetched is
+    - **The queue is a global PENDING set** (it takes no `status` argument), so
+      "find my row" is a *pagination* problem: every earlier client run's PENDING
+      bookings are still there, and the DataGrid's footer has only previous/next —
+      no "Go to last page". `showRow()` therefore takes the largest page size,
+      reads the *current page* out of the footer's own `1–100 of 144` label, and
+      steps forward until the row appears or the grid stops moving. The label is
+      the observable, deliberately: the request is not (a page already fetched is
       answered from Apollo's cache and never reaches the wire) and the next
       *button* is not either — at the last page it still looks enabled, a click
       changes nothing, and a "no request" assertion there is a 5-second timeout
@@ -713,11 +826,27 @@ Scripts outside `npm run dev`:
       `data-id`: the booking UUID is not in a row's accessible name, so
       `getByRole('row', { name: /uuid/ })` is `null` whether the row is there or
       not.
-    - **`pendingQueue` is ordered `createdAt ASC` and that is FR-50's "requested
-      date/time"**: the order the requests were made, so the longest-waiting one is
-      first. The resolver forces the sort and S8 scenario 12/12b pins it; the
-      screen shows the requested *window* as columns and never re-sorts a page of a
-      server-paginated set. Do not "fix" the screen into sorting by start time.
+    - **`pendingQueue` is ordered `createdAt DESC` by default** — newest request
+      first, because the queue is a work list and the newest request is the one a
+      manager has not seen yet. The resolver applies that default when the client
+      sends no `sort`; the screen's columns are sortable through the same
+      whitelist-validated `sort` argument the bookings list takes, and its initial
+      table state carries `createdAt DESC` so the default is visible in the grid.
+      S8 scenario 12 pins all three halves: an explicit sort is honoured, a
+      non-whitelisted field is refused, and the no-sort default is DESC. The
+      screen shows the requested *window* as columns and never re-sorts a page of
+      a server-paginated set.
+    - **Approving is the Manager's job, not the Admin's.** The Admin role seed
+      does not hold `booking:approve`/`booking:reject`, so the admin sees no
+      Approvals nav item, is refused the route on a deep link, and is refused the
+      mutations directly. The notification recipient query
+      (`findApproverEmployeeIds`) is permission-based, so admins stop receiving
+      `BOOKING_PENDING` as a consequence — no role-name coupling anywhere. Two
+      things make this work and both are load-bearing: `seedRoles` *syncs* (it
+      deletes links absent from the seed list, not just inserts missing ones —
+      without that, re-running `npm run seed` silently keeps a revoked grant), and
+       the C0 suite pins the admin's exact 16-key permission set and 8 nav items so
+      a permission cannot move in either direction unnoticed.
     - **A session that can reach the queue is not necessarily a session that can
       read it.** `BookingResolver.requester` calls `readScope` for a request's
       "other recent bookings" *even when the client selects only the name*, so a
@@ -820,17 +949,31 @@ Scripts outside `npm run dev`:
       session that lacks it (NFR-5 — the server would refuse it anyway; skipping
       is the courtesy, not the control). There is one query per equipment line
       because `equipmentAvailability` takes one item per call; that is the
-      endpoint's shape, not an N+1 the screen chose, and there is no batched form
-      of the query to call.
+      endpoint's shape, not an N+1 the screen chose.
+    - **The select's options are window-aware, and the window is lifted out of
+      the panel.** The equipment dropdown shows `Name — M available` where M is
+      the server's `remainingAvailability` for the typed window, via the batched
+      `equipmentAvailabilityForWindow` query (one request for every bookable item,
+      reusing `getEquipmentFreeQuantities`; the per-item endpoint cannot answer
+      for a whole select). The panel already computes the settled window for
+      its own questions, so it reports it upward through an `onWindowChange`
+      callback — the *debounced* question, since that is the one whose answer
+      is on screen. Two things are load-bearing: the reported question is
+      memoized (`useMemo` on the three debounced primitives), because a fresh
+      object identity every render makes the parent setState → re-render →
+      effect → setState until React's update-depth limit fires; and the batched
+      query is skipped until the form is open *and* a window has settled, so a
+      closed form costs nothing.
   - Client C2 half 5, the lifecycle and the reuse proof.
     - **FR-56 catches fixtures, not just users.** The availability suite's
-      blocking booking could not be created *and* approved by the admin: the admin
-      holds `booking:approve`, so the server refused its own approval with "A
-      manager cannot approve or reject their own booking request". The fixture now
-      has the requester create it and the admin approve it, which is also the
-      arrangement FR-56 describes. A blocking fixture must also be APPROVED, not
-      merely PENDING (FR-35), or the room is free and the availability assertions
-      are measuring nothing.
+      blocking booking could not be created *and* approved by the same employee:
+      the approver holds `booking:approve`, so the server refused its own approval
+      with "A manager cannot approve or reject their own booking request". The
+      fixture therefore has the requester create it and a *different* person (a
+      manager — the admin no longer holds the approval permissions) approve it,
+      which is also the arrangement FR-56 describes. A blocking fixture must also
+      be APPROVED, not merely PENDING (FR-35), or the room is free and the
+      availability assertions are measuring nothing.
     - **The page-walk helpers moved into `c2.harness.tsx`.** `showRow()`,
       `rowOnThisPage()`, `displayedPage()`, `settleGrid()`, `pageSizeValue()`,
       `PAGE_SIZE` and `signOutIfSignedIn()` were in `c2.approvals.test.tsx` and are

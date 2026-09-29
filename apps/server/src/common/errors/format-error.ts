@@ -6,6 +6,7 @@ import { extractFieldErrors } from './field-errors'
 import { InvalidCredentialsError } from './invalid-credentials-error'
 import { LockoutGuardError } from './lockout-guard-error'
 import { NotFoundError } from './not-found-error'
+import { SystemRoleError } from './system-role-error'
 
 const CODE_BY_ERROR_NAME: Record<string, string> = {
   [AuthorisationError.name]: 'FORBIDDEN',
@@ -13,6 +14,7 @@ const CODE_BY_ERROR_NAME: Record<string, string> = {
   [NotFoundError.name]: 'NOT_FOUND',
   [ConflictError.name]: 'CONFLICT',
   [LockoutGuardError.name]: 'LOCKOUT_GUARD',
+  [SystemRoleError.name]: 'SYSTEM_ROLE',
   [DomainError.name]: 'BAD_USER_INPUT',
 }
 

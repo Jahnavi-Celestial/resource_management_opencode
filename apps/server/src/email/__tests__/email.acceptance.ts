@@ -4,6 +4,7 @@ import { In, Like } from 'typeorm'
 import { createDataSource } from '../../config/data-source'
 import { loadEnv, type Env } from '../../config/env'
 import { runInTransaction } from '../../common/db/transaction'
+import { InputValidationError } from '../../common/errors/field-errors'
 import { Booking } from '../../modules/booking/booking.entity'
 import { BookingEquipment } from '../../modules/booking/booking-equipment.entity'
 import { BookingService } from '../../modules/booking/booking.service'
@@ -15,6 +16,7 @@ import { UserRole } from '../../modules/rbac/user-role.entity'
 import { Notification } from '../../modules/notification/notification.entity'
 import { EmailOutbox } from '../email-outbox.entity'
 import { EmailService } from '../email.service'
+import { EmployeeService } from '../../modules/employee/employee.service'
 import { backoffMs, dispatchPendingEmails } from '../dispatcher'
 import { createEmailProvider } from '../providers'
 import { NoopProvider } from '../providers/noop.provider'
@@ -127,6 +129,7 @@ async function main(): Promise<void> {
     roomId = room.id
 
     const emailService = new EmailService()
+    const employeeService = new EmployeeService(dataSource)
     const bookingService = new BookingService(dataSource, undefined, undefined, undefined, emailService)
     let slot = 0
     const submit = async (employeeId: string, purpose: string) => {
@@ -251,8 +254,74 @@ async function main(): Promise<void> {
       `1d. rejection enqueues: to=${rejectionRow.toEmail} template=${rejectionRow.eventType} reasonInBody=true`,
     )
 
+    // --- 1e. creating an employee queues the welcome email ----------------
+    // The plaintext password exists only in the create input — the store keeps
+    // a hash — so the welcome email is the one moment it can be sent. It is
+    // HTML-escaped like every other interpolated value.
+    const welcomePassword = `Welc0me!<b>${runId}</b>`
+    const welcomeEmployee = await employeeService.create({
+      firstName: `Wes${runId}`,
+      lastName: 'Welcome',
+      email: `wes-${runId}@example.test`,
+      password: welcomePassword,
+    })
+    employeeIds.push(welcomeEmployee.id)
+    const welcomeOutbox = await outboxRepository.findOneOrFail({
+      where: { eventType: 'EMPLOYEE_WELCOME', toEmail: welcomeEmployee.email },
+    })
+    await holdRow(welcomeOutbox.id)
+    assert.equal(welcomeOutbox.toEmail, welcomeEmployee.email)
+    assert.match(welcomeOutbox.subject, /credentials/)
+    assert.ok(welcomeOutbox.html.includes(welcomeEmployee.email), 'the body carries the login email')
+    assert.ok(welcomeOutbox.html.includes(`Welc0me!&lt;b&gt;${runId}&lt;/b&gt;`), 'the password is escaped')
+    assert.ok(!welcomeOutbox.html.includes(`Welc0me!<b>`), 'no raw markup reaches the body')
+    // A refused create (unknown role) rolls back, and the rollback must leave
+    // no outbox row behind — the email is post-commit, so it never even runs.
+    const welcomeBefore = await outboxRepository.count()
+    const welcomeRefused = await employeeService
+      .create({
+        firstName: `Wes${runId}`,
+        lastName: 'Refused',
+        email: `wes-refused-${runId}@example.test`,
+        password: welcomePassword,
+        roleId: randomUUID(),
+      })
+      .then(() => 'no error')
+      .catch((error: unknown) => error)
+    assert.ok(welcomeRefused instanceof InputValidationError)
+    assert.deepEqual(welcomeRefused.fieldErrors, [{ field: 'roleId', message: 'Role not found' }])
+    assert.equal(
+      await outboxRepository.count(),
+      welcomeBefore,
+      'a refused create queues no welcome email',
+    )
+    // Its own provider and dispatch, so the assertions below stay scoped to
+    // this row instead of depending on claim order with the booking rows.
+    // The booking rows from 1d are held at the same clock — push them out of
+    // this dispatch's reach so the count is this row's alone.
+    await outboxRepository.update(
+      { id: In([approvalOutbox.id, rejectionRow.id]) },
+      { nextAttemptAt: new Date(clock.getTime() + 3600000) },
+    )
+    const welcomeNoop = new NoopProvider()
+    const welcomeRun = await dispatch(welcomeNoop)
+    assert.equal(welcomeRun.sent, 1)
+    assert.equal(welcomeNoop.sent[0]?.outboxId, welcomeOutbox.id)
+    assert.equal(welcomeNoop.sent[0]?.to, welcomeEmployee.email)
+    assert.equal(welcomeNoop.sent[0]?.subject, welcomeOutbox.subject)
+    assert.equal(welcomeNoop.sent[0]?.html, welcomeOutbox.html)
+    const welcomeSent = await outboxRepository.findOneByOrFail({ id: welcomeOutbox.id })
+    assert.equal(welcomeSent.status, 'SENT')
+    assert.equal(welcomeSent.attempts, 1)
+    console.log(
+      `1e. welcome email: to=${welcomeOutbox.toEmail} template=${welcomeOutbox.eventType} subject="${welcomeOutbox.subject}" passwordInBody=true escaped=true refusedCreateRows=0 dispatched=1 status=${welcomeSent.status}`,
+    )
+
     // --- 2. the dispatcher sends a pending row via the noop provider -------
     const noop = new NoopProvider()
+    // 1e pushed the approval row an hour into the future to isolate its own
+    // dispatch; pull it back to due (the rejection row stays out of reach).
+    await advanceClockPast(approvalOutbox.id)
     const firstRun = await dispatch(noop)
     const sentRow = await outboxRepository.findOneByOrFail({ id: approvalOutbox.id })
     assert.equal(sentRow.status, 'SENT')

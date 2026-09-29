@@ -20,6 +20,7 @@ export const EquipmentDocument = graphql(/* GraphQL */ `
         id
         name
         quantityAvailable
+        availableNow
         isActive
         createdAt
       }

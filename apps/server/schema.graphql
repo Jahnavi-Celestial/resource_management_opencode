@@ -2,11 +2,12 @@ type Query {
   me: MeType!
   bookings(filter: BookingFilterInput, sort: SortInput, page: Int! = 1, pageSize: Int! = 20): PaginatedBookings!
   booking(id: ID!): BookingType!
-  pendingQueue(page: Int! = 1, pageSize: Int! = 20): PaginatedBookings!
+  pendingQueue(sort: SortInput, search: String, page: Int! = 1, pageSize: Int! = 20): PaginatedBookings!
   employees(page: Int! = 1, pageSize: Int! = 20, search: String, sort: SortInput): PaginatedEmployee!
   employee(id: String!): Employee!
   equipment(page: Int! = 1, pageSize: Int! = 20, search: String, activeOnly: Boolean! = false, sort: SortInput): PaginatedEquipment!
   equipmentAvailability(endDate: DateTimeISO!, startDate: DateTimeISO!, equipmentId: String!): EquipmentAvailabilityResult!
+  equipmentAvailabilityForWindow(endDate: DateTimeISO!, startDate: DateTimeISO!, equipmentIds: [String!]!): [EquipmentAvailabilityResult!]!
   auditLogs(filter: AuditLogFilter, sort: SortInput, page: Int! = 1, pageSize: Int! = 20, bookingId: ID, actorId: ID, performedById: ID, action: AuditAction, status: BookingStatus, from: DateTimeISO, to: DateTimeISO): PaginatedAuditLogs!
   myNotifications(sort: SortInput, page: Int! = 1, pageSize: Int! = 20, type: NotificationType, unreadOnly: Boolean): PaginatedNotifications!
   unreadCount: Int!
@@ -46,6 +47,7 @@ scalar DateTimeISO
 type Role {
   id: ID!
   roleName: String!
+  isSystemRole: Boolean!
   permissions: [Permission!]!
 }
 
@@ -169,6 +171,7 @@ type Equipment {
   id: ID!
   name: String!
   quantityAvailable: Int!
+  availableNow: Int
   isActive: Boolean!
   createdAt: DateTimeISO!
   updatedAt: DateTimeISO!
@@ -396,6 +399,7 @@ input CreateEmployeeInput {
   lastName: String!
   email: String!
   password: String!
+  roleId: ID
 }
 
 input UpdateEmployeeInput {
@@ -409,6 +413,7 @@ input UpdateEmployeeInput {
 input CreateEquipmentInput {
   name: String!
   quantityAvailable: Int!
+  isActive: Boolean
 }
 
 input UpdateEquipmentInput {
@@ -430,6 +435,7 @@ input EmployeeRoleInput {
 
 input CreateRoleInput {
   roleName: String!
+  permissionIds: [ID!]
 }
 
 input UpdateRoleInput {
